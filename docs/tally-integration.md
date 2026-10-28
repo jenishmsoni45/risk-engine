@@ -1,6 +1,6 @@
 # tally integration: the pre-commit risk decision call
 
-The spec for the tally side of the risk engine's decision call. The decisions behind it are D2 to D11 in [decisions.md](decisions.md). Under D12 it was copied into tally as `docs/risk-decision-call.md`, with section 6 added to tally's PLAN.md as Phase 10 (branch `docs-phase-10-plan`). tally builds from its copy; any change to the contract is made in both.
+The spec for the tally side of the risk engine's decision call. The decisions behind it are D2 to D11 in [decisions.md](decisions.md). Under D12 it was copied into tally as `docs/risk-decision-call.md`, with section 6 added to tally's PLAN.md as Phase 10 (branch `docs-phase-10-plan`). tally builds from its copy; any change to the contract is made in both. tally built it in its Phase 10 (PR #14, merged 2026-10-28); the refinements tally made to the contract on the way are folded in below and recorded as D13.
 
 ## 1. The story
 
@@ -57,7 +57,7 @@ Content-Type: application/json
 | 200, `decision: "hold"` | Held for review | 403 problem, type `transfer-held`, with `decisionId`; nothing posts |
 | 200, `decision: "block"` | Blocked | 403 problem, type `transfer-blocked`, with `decisionId`; nothing posts |
 | 409 problem | This requestId was already decided for a different transfer | tally's existing key-conflict 409 ("Idempotency-Key was already used for a different request") |
-| No answer within the timeout, connection refused or reset, any other status, a body that doesn't parse, or a body with a value outside the lists below | No decision | Backup answer (3.4) |
+| No answer within the timeout, connection refused or reset, any other status, a body over 16 KiB, a body that doesn't parse, or a body with a value outside the lists below | No decision | Backup answer (3.4) |
 
 A 200 body:
 
@@ -71,9 +71,12 @@ A 200 body:
 }
 ```
 
-- `decisionId` is a UUID. `decision` and `onTimeout` are each one of `allow`, `hold`, `block`. tally treats a 200 that breaks any of these as no decision.
+- `decisionId` is a UUID in the canonical 8-4-4-4-12 form. `decision` and `onTimeout` are each one of `allow`, `hold`, `block`, in exact lowercase. tally treats a 200 that breaks any of these as no decision.
+- A 200 body is at most 16 KiB; a longer one is no decision.
+- tally ignores fields it doesn't know, reads no body on a 409, and doesn't follow redirects. Its request has a `Content-Length` (not chunked), uses HTTP/1.1 without compression, and carries a W3C `traceparent` header.
 - tally uses `decisionId`, `decision` and `onTimeout`. It does not store, log or return `ruleSet` or `fired`; they stay in the risk engine's decision log.
-- The same `requestId` with the same `fromAccountId`, `toAccountId`, `amount` and `currency` always gets the same 200 body back, whenever it is asked (the risk engine's invariant I1). `requestedAt` is not part of that match.
+- The same `requestId` with the same `fromAccountId`, `toAccountId`, `amount` and `currency` always gets the same `decisionId`, `decision`, `ruleSet` and `fired` back, whenever it is asked (the risk engine's invariant I1). `requestedAt` is not part of that match.
+- `onTimeout` is always the current rule set's, in a replayed decision too, so a retried old key can't bring back an older rule set's backup answer (3.4).
 
 ### 3.3 tally → customer
 
@@ -105,12 +108,13 @@ Content-Type: application/problem+json
   "detail": "The risk check did not answer in time; try again. A transfer retried with the same Idempotency-Key moves money at most once." }
 ```
 
-- RFC 9457 allows a relative `type`. tally's existing problems keep `about:blank`. The tally phase may choose absolute URIs instead; the risk engine only needs the three types to be distinct and stable.
+- RFC 9457 allows a relative `type`, and tally kept the relative URIs above. tally's existing problems keep `about:blank`. The risk engine only needs the three types to be distinct and stable.
 - A refused transfer (403 or 503) saves no idempotency key, like every other refusal in tally. A retry with the same key goes through the guard again: a held key is held again (I1), and a key refused by the backup answer gets a real decision once the guard is back.
 
 ### 3.4 The backup answer
 
 - tally keeps the `onTimeout` of the latest valid 200 in memory. Before the first one, and after a restart, it uses `tally.risk.on-timeout-default` (default `hold`).
+- Every 200 carries the current rule set's `onTimeout` (3.2), so the latest reply names the backup answer in force. Two replies in flight while the rule set changes can arrive in either order, so for a moment tally can keep the older rule set's value; the next reply puts it right.
 - Backup `allow`: post the transfer with `riskCheck: fallback` and `decisionId: null`.
 - Backup `hold` or `block`: 503 `risk-unavailable` (3.3). Nothing posts.
 
@@ -136,7 +140,7 @@ Two new fields on every entry, in the 201 body, in replays saved after this phas
 
 - Both fields are always present (null is sent, like `reversesId`).
 - A reversal of a checked transfer is `none`: reversals never ask the guard.
-- Responses saved before this phase, and outbox rows written before it, don't have the fields. tally decides whether a replay of an old key shows them as missing or as `null`/`none`; the risk engine reads a missing field as `decisionId: null, riskCheck: none`.
+- A replay of a response saved before tally's Phase 10 shows `decisionId: null` and `riskCheck: none`, which is V7's column default for that entry. Outbox rows written before Phase 10 don't have the fields, and the risk engine reads a missing field in an event as `decisionId: null, riskCheck: none`.
 - tally's `docs/design.md` ("Event ordering and delivery") lists the two fields. Everything else about the event is unchanged: same topic, key, partitions, at-least-once delivery and line-id ordering.
 
 ## 4. Behaviour in detail
@@ -160,8 +164,9 @@ The transaction boundary stays on the posting service, so the guard call must ha
 ### 4.3 The timeout
 
 - The whole guard call (connect, send, wait, read the body) ends within `tally.risk.timeout` plus a small margin, whatever the guard does: accept the connection and never answer, answer slowly, or send a body slowly. The tests measure this (section 6, test 4).
-- Connections to the guard are reused (keep-alive), so a normal call doesn't pay for a new TCP connection.
-- One way to get a hard deadline: build the client on the JDK `HttpClient` with a connect timeout and a per-request timeout that together fit within the budget. The tally phase picks the mechanism; only the measured bound counts.
+- Connections to the guard are reused (keep-alive), so a normal call doesn't pay for a new TCP connection. tally closes a connection after 4 s idle, and the risk engine keeps an idle connection open for at least 5 s, so tally never sends a request on a connection the risk engine is closing. The JDK client doesn't retry a POST, so such a request would be no decision.
+- At most 100 calls are in flight per tally process. A transfer that finds 100 in flight doesn't wait for a slot: it is no decision at once (outcome `unavailable`) and gets the backup answer.
+- tally uses Spring's JDK request factory with one deadline for the whole call; its `RiskDecisionIT` measures the bound.
 
 ### 4.4 Configuration
 
@@ -179,11 +184,11 @@ tally:
     on-timeout-default: hold
 ```
 
-At startup, with `enabled: true`: `url` must be an absolute http(s) URL, `timeout` must be positive, and `on-timeout-default` must be `allow`, `hold` or `block`, or tally refuses to start.
+At startup, with `enabled: true`: `url` must be an absolute http(s) URL, `timeout` must be at least 1 ms, and `on-timeout-default` must be `allow`, `hold` or `block`, or tally refuses to start.
 
 ### 4.5 Observability
 
-- Timer `ledger.risk.duration` around the guard call, tagged `outcome` = `allow`, `hold`, `block`, `conflict`, `timeout`, `unavailable` (connection refused, reset or a non-200/409 status) or `invalid` (a body that breaks 3.2), with histogram buckets for p95 and p99 like tally's other timers.
+- Timer `ledger.risk.duration` around the guard call, tagged `outcome` = `allow`, `hold`, `block`, `conflict`, `timeout`, `unavailable` (connection refused or reset, a status other than 200 and 409, or 100 calls already in flight) or `invalid` (a body that breaks 3.2, one over 16 KiB included), with histogram buckets for p95 and p99 like tally's other timers.
 - The call is made through a client built from Spring Boot's auto-configured builder, so it gets a client span and sends the W3C `traceparent` header. The risk engine can then continue the same trace.
 - `decisionId` goes into the log context next to `entry_id` and the idempotency key on the "Posted entry" line. A backup answer logs one WARN line with the key, the outcome tag and the backup answer used. No request or response bodies are logged.
 - `ledger.posting.duration` keeps timing the whole HTTP path, so with the check on it includes the guard's time.
@@ -202,7 +207,7 @@ ports:
   - "127.0.0.1:9094:9094"
 ```
 
-This relies on Docker Desktop forwarding `host.docker.internal` to the Mac, which the Verify step checks with a throwaway consumer container. If that check fails, the fallback is to have the risk engine's Compose project join tally's network as an external network, with a listener advertised under the Kafka service's name. That fallback is a decision for the owner.
+This relies on Docker Desktop forwarding `host.docker.internal` to the Mac. tally's Phase 10 Verify confirmed it: a throwaway `apache/kafka:4.3.1` container read an event through `host.docker.internal:9094`.
 
 ## 5. Out of scope for this tally phase
 
@@ -215,7 +220,7 @@ This relies on Docker Desktop forwarding `host.docker.internal` to the Mac, whic
 
 ## 6. Phase text for tally's PLAN.md
 
-Paste below tally's last phase. Start it only after tally's phase 9 PR (#12) is merged, so the branch comes from an up-to-date `main`.
+Added to tally's PLAN.md under D12 (tally PR #13) and built in tally PR #14. Kept here as the plan that build followed; tally's copy is the one to change.
 
 ```markdown
 ## Phase 10 · Risk decision call
@@ -254,7 +259,8 @@ Done when: every test passes, the container consumer reads an event with both ne
 
 For context only; built in this repo's phases.
 
-- Serves `POST /v1/decisions` as in 3.1 and 3.2, including the 409 and `onTimeout` in every 200.
+- Serves `POST /v1/decisions` as in 3.1 and 3.2, including the 409, and the current rule set's `onTimeout` in every 200, a replayed decision included.
+- Keeps every 200 body under 16 KiB, and an idle connection from tally open for at least 5 s (4.3).
 - Its ledger stub mimics tally's new behaviour and event fields, so CI here can test without tally.
 - After tally's phase 10, captures a fixture from a real tally event (with the new fields) and tests that the stub's events parse the same way.
 - Its consumer reads `ledger.entries` from tally's broker through the container listener (4.6) when it runs against real tally, and from its own broker when it runs against the stub.

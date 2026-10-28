@@ -2,7 +2,7 @@
 
 Every question asked in Phase 0 and its answer, then every later decision. Each entry gives the question, the options considered, the answer, why, and what it changes. Entries are never edited after the fact; a changed decision gets a new entry that names the one it replaces.
 
-Status (2026-10-28): Phase 0 is paused. The owner is building the tally side of the decision call first (D2, spec in [tally-integration.md](tally-integration.md), added to tally under D12) and will come back to the open questions at the end of this file.
+Status (2026-10-28): tally's side of the decision call is built and merged (D13). Phase 0 resumes with the open questions at the end of this file.
 
 ## Log
 
@@ -95,6 +95,19 @@ PLAN.md asks Phase 0 to re-check the ledger contract against tally's `main`. Rea
 - Answer: **a one-time exception, committed locally; the owner pushes.** In the local clone `~/Desktop/tally`, branch `docs-phase-10-plan` from `main` (after tally PR #12 merged) has two commits: `docs/risk-decision-call.md` (this repo's spec, written from tally's side) and "Phase 10 · Risk decision call" in tally's PLAN.md. Nothing was pushed.
 - Why: the owner asked for the plan to live in tally's own docs before building it there.
 - Consequences: the rule stands for everything else. The contract now has two copies, [tally-integration.md](tally-integration.md) here and `docs/risk-decision-call.md` in tally; tally builds from its copy, and any change to the contract is made in both.
+
+### D13. tally built the decision call; what it refined (2026-10-28)
+
+tally PR #13 (the plan from D12) and PR #14 (its Phase 10) are merged. Checked against tally's `main`: the request, the 200 fields, the 409, the three problem types (kept as relative URIs), the backup answer, the two entry fields, V7 and the container listener match [tally-integration.md](tally-integration.md). tally's Verify read an event through `host.docker.internal:9094` from a container. The owner agreed these refinements in tally, now folded into this repo's copy:
+
+- Replaces part of D10: every 200, a replayed decision included, carries the **current** rule set's `onTimeout`, not the one stored with the decision. I1 therefore covers `decisionId`, `decision`, `ruleSet` and `fired`.
+- A 200 body over 16 KiB is no decision.
+- tally closes an idle connection to the risk engine after 4 s, so **the risk engine must keep an idle connection open for at least 5 s**.
+- At most 100 calls in flight per tally process; a call over that gets the backup answer at once.
+- tally's parsing is strict where it matters and lenient elsewhere: canonical UUID, exact lowercase `allow`/`hold`/`block`, unknown fields ignored, no body read on a 409, no redirects followed.
+- A replay of a response saved before tally's V7 shows `decisionId: null, riskCheck: none`.
+
+Consequences for this repo: the decision API's replay path returns the stored decision with the current `onTimeout`; the server's keep-alive timeout is set explicitly to at least 5 s; the fixture can now be captured from real tally (O12), and the stub must mirror tally's Phase 10 behaviour (O11).
 
 ## Open questions
 
