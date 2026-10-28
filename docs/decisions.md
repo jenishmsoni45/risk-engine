@@ -2,7 +2,7 @@
 
 Every question asked in Phase 0 and its answer, then every later decision. Each entry gives the question, the options considered, the answer, why, and what it changes. Entries are never edited after the fact; a changed decision gets a new entry that names the one it replaces.
 
-Status (2026-10-28): Phase 0 is paused. The owner is building the tally side of the decision call first (D2, spec in [tally-integration.md](tally-integration.md)) and will come back to the open questions at the end of this file.
+Status (2026-10-28): Phase 0 is paused. The owner is building the tally side of the decision call first (D2, spec in [tally-integration.md](tally-integration.md), added to tally under D12) and will come back to the open questions at the end of this file.
 
 ## Log
 
@@ -87,6 +87,14 @@ PLAN.md asks Phase 0 to re-check the ledger contract against tally's `main`. Rea
 - Answer: **the guard answers 409, and tally passes it on as its own 409** ("Idempotency-Key was already used for a different request"). A retry with the same key and the same transfer gets the stored answer, whenever it comes; `requestedAt` is not part of the match.
 - Why: it matches tally's own key rule exactly, and keeps I1 (one key, one answer).
 - Consequences: the guard compares `fromAccountId`, `toAccountId`, `amount` and `currency` of a repeated `requestId` with the stored ones.
+
+### D12. One-time exception: adding the plan to tally from here (2026-10-28)
+
+- Question: CLAUDE.md says never change the tally repo from here. May the tally spec and phase be added to tally from this session?
+- Options: commit in tally locally and the owner pushes; also push and open the PR; keep the rule.
+- Answer: **a one-time exception, committed locally; the owner pushes.** In the local clone `~/Desktop/tally`, branch `docs-phase-10-plan` from `main` (after tally PR #12 merged) has two commits: `docs/risk-decision-call.md` (this repo's spec, written from tally's side) and "Phase 10 · Risk decision call" in tally's PLAN.md. Nothing was pushed.
+- Why: the owner asked for the plan to live in tally's own docs before building it there.
+- Consequences: the rule stands for everything else. The contract now has two copies, [tally-integration.md](tally-integration.md) here and `docs/risk-decision-call.md` in tally; tally builds from its copy, and any change to the contract is made in both.
 
 ## Open questions
 

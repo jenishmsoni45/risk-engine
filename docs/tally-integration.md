@@ -1,6 +1,6 @@
 # tally integration: the pre-commit risk decision call
 
-The spec for the tally side of the risk engine's decision call. This repo never changes tally, so the owner takes this document to the tally repo and builds it there as a new tally phase (section 6 is written to paste into tally's PLAN.md). The decisions behind it are D2 to D11 in [decisions.md](decisions.md).
+The spec for the tally side of the risk engine's decision call. The decisions behind it are D2 to D11 in [decisions.md](decisions.md). Under D12 it was copied into tally as `docs/risk-decision-call.md`, with section 6 added to tally's PLAN.md as Phase 10 (branch `docs-phase-10-plan`). tally builds from its copy; any change to the contract is made in both.
 
 ## 1. The story
 
