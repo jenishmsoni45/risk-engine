@@ -4,11 +4,11 @@ Phases 1 to 8 from PLAN.md section 6. Each phase is one PR, started only when th
 
 ## Phase 1 · Scaffold (Nov 16)
 
-**Scope.** The layout of PLAN.md section 7; `pyproject.toml` and `uv.lock` for Python 3.12; ruff and mypy settings; one Dockerfile for the decision API, consumer, stub and `migrate`; `docker-compose.yml` with Redis, Postgres, Kafka, `migrate`, `api`, `consumer` and `stub` (D31, D40j); health checks; the migration runner (D40w); `GET /health` on the API and the stub, `GET /metrics` on all three (D40t); the `ledger.entries` topic; `.env.example`; a Makefile with `up`, `down`, `test`, `lint`, `audit`, `clean` and `purge` (D41); the install safeguards in `pyproject.toml` (D41); the CI workflow.
+**Scope.** The layout of PLAN.md section 7; `pyproject.toml` and `uv.lock` for Python 3.12; ruff and mypy settings; one Dockerfile for the decision API, consumer, stub and `migrate`; `docker-compose.yml` with Redis, Postgres, Kafka, `topics`, `migrate`, `api`, `consumer` and `stub` (D31, D40j, D42); health checks; the migration runner (D40w); `GET /health` on the API and the stub, `GET /metrics` on all three (D40t); the `ledger.entries` topic, created by the one-shot `topics` service (D42); `.env.example`; a Makefile with `up`, `down`, `test`, `lint`, `audit`, `clean` and `purge` (D41); the install safeguards in `pyproject.toml` (D41); the CI workflow.
 
 **Acceptance criteria**
 1. The phase starts by running `uv --version`; if it fails, work stops and the owner is asked (D28).
-2. `make up` brings every long-running service to healthy and `migrate` to a clean exit. (`tests/integration/test_stack.py::test_services_healthy`)
+2. `make up` brings every long-running service to healthy and `migrate` and `topics` to a clean exit. (`tests/integration/test_stack.py::test_services_healthy`)
 3. `make down` leaves no container of this project, running or stopped. (a CI step after the tests: `make down`, then `docker compose ps -aq` prints nothing)
 4. Every published port is bound to 127.0.0.1 and equals D31's table plus the consumer's metrics port (D40z). (`tests/integration/test_stack.py::test_ports`, from `docker compose config`)
 5. Every image has an exact tag, never `latest`; every Python dependency is pinned in `uv.lock`. (`tests/integration/test_stack.py::test_images_pinned`; `uv lock --check` in `make lint`)

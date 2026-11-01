@@ -326,6 +326,27 @@ Not asked as questions: choices made inside the answers above while writing requ
 - Why: pins and audits catch known problems after the fact. The cutoff, wheels-only and locked installs stop the usual supply-chain attacks (a fresh malicious release, code run at install time, a silently changed file) before anything runs, and tests keep them on, so they hold without anyone watching.
 - Consequences: Phase 1 adds the settings, `make clean`, `make purge`, `tests/unit/test_dependency_safety.py` and three acceptance criteria (phases.md). A security fix newer than the cutoff waits for an override approved in a PR. LightGBM's macOS wheel needs OpenMP (`brew install libomp`, per its PyPI page), which can't be installed on this Mac: O24.
 
+### D42. Gaps found at the start of Phase 1 (2026-11-01)
+
+Four questions the docs didn't settle, asked before any Phase 1 code, plus the image tags D31 left to Phase 1.
+
+1. **Who creates `ledger.entries`.**
+   - Options: a one-shot `topics` Compose service; the stub creates it at startup, as tally does with its `NewTopic` bean; `migrate` creates it.
+   - Answer: **a one-shot `topics` service** (owner). It runs on `apache/kafka:4.3.1` (no new image) once Kafka is healthy, creates the topic with `--if-not-exists`, 3 partitions and replication factor 1, and fails if the topic exists with another partition count. The consumer and the stub start only after it completes. The broker's automatic topic creation is off, so no topic appears by accident with the wrong partition count.
+   - Why: the topic exists before anything reads or writes it, so the consumer never subscribes to a missing topic, and `migrate` keeps its one job (D40w).
+   - Consequences: architecture.md gains the service in its component diagram and deployment table; phases.md's Phase 1 scope and criterion 2 name it.
+2. **How the Docker image gets uv.** Astral's `astral/uv` image is listed on Docker Hub as a community image, neither official nor from a verified publisher, so CLAUDE.md's image rule excludes it.
+   - Options: install uv from PyPI inside the image, hash-pinned; use `astral/uv` as an exception; no uv in the image (pip with a hashed export, which breaks D41.4).
+   - Answer: **from PyPI, hash-pinned** (owner). A build stage installs uv 0.13.6, the version on the Mac, from `docker/uv-requirements.txt` with `pip install --require-hashes --only-binary :all: --no-deps`, then runs `uv sync --locked --no-dev`. The final stage copies only the virtual environment, without uv.
+   - Note: uv 0.13.6 was uploaded to PyPI on 2026-10-27, after D41's cutoff. The cutoff governs `uv.lock`; keeping the image's uv equal to the Mac's keeps one lock format across both.
+3. **How CI gets uv.**
+   - Options: Astral's `setup-uv` action pinned to a commit; the same hash-pinned PyPI install on the runner.
+   - Answer: **`astral-sh/setup-uv` pinned to a commit** (owner): v10.3.2 at `07a047e608db84b3d8c06cd9a7c7dcc9c355c18e`, installing uv 0.13.6 checked against the SHA-256 of its Linux release archive, with the action's cache off. `actions/checkout` is pinned the same way (v7.0.1 at `3d3c42e5aac5ba805825da76410c181273ba90b1`). Both tags are more than 7 days old, in the spirit of D41.1.
+4. **Docker's build cache.** Building the image leaves layers in Docker's build cache, which `make clean` and `make purge` don't remove: Docker can't clear one project's build cache alone, and the local safety guard blocks `docker builder prune`.
+   - Options: `make purge` prints it as a step for the owner; `make purge` clears all build cache itself; leave it and document it.
+   - Answer: **print it as a step for the owner** (owner). `make purge` ends by printing two steps left to the owner: `docker builder prune` (which clears every project's build cache) and `brew uninstall uv`. This replaces "the one step left to the owner" in D41.6; the rest of D41 stands.
+5. **Image tags** (D31 left them to Phase 1): `redis:8.10.3` and the build base `python:3.12.16-slim-trixie`, the newest patch releases on Docker Hub on 2026-11-01. architecture.md's Redis row now names the tag.
+
 ## Open questions
 
 - **O24. How 2b runs LightGBM on this Mac.** LightGBM's macOS wheel needs OpenMP from Homebrew (`libomp`), and CLAUDE.md allows no installs on the Mac. Options include running training, the backtest and shadow scoring only inside Docker, where the image provides OpenMP, or the owner installing libomp. To be decided before Phase 6 starts; nothing earlier depends on it.

@@ -18,6 +18,7 @@ flowchart LR
         pg[("Postgres<br/>decisions, bad_events, stub schema")]
         kafka[("Kafka<br/>ledger.entries, 3 partitions")]
         migrate["migrate (one-shot)"]
+        topics["topics (one-shot)"]
     end
     tallykafka[("tally's Kafka<br/>host.docker.internal:9094")]
 
@@ -35,6 +36,7 @@ flowchart LR
     consumer -->|"one sorted-set member per account and entry"| redis
     consumer -->|"malformed messages"| pg
     migrate -->|"schema"| pg
+    topics -->|"creates ledger.entries"| kafka
 ```
 
 | Component | Role | Code (PLAN.md section 7) |
@@ -45,6 +47,7 @@ flowchart LR
 | Rules | Loads and validates the YAML rule set at startup and evaluates it | `risk/rules/` |
 | Ledger stub | tally's transfer path for CI: Idempotency-Key rules, the decision call with tally's timeout and backup answer, an outbox and relay that publish tally-format events (D24) | `ledger_stub/` |
 | migrate | Applies numbered SQL migrations before the other services start (D40w) | `risk/migrations/` |
+| topics | Creates `ledger.entries` with 3 partitions before the consumer and the stub start (D42) | `docker-compose.yml` |
 | Redis | Window and attempt sorted sets, the watermark. Rebuildable, never the source of truth (D40r) | |
 | Postgres | The decision log, `bad_events`, the stub's schema | |
 | Kafka | This repo's own broker, `apache/kafka:4.3.1` like tally's; `ledger.entries` with 3 partitions like tally's | |
@@ -220,11 +223,12 @@ The amount comes first in the member because a `requestId` may contain a colon. 
 | Service | Image | Host port (127.0.0.1) | Depends on |
 |---|---|---|---|
 | `migrate` | this repo's image | none | postgres healthy |
+| `topics` | `apache/kafka:4.3.1` | none | kafka healthy |
 | `api` | this repo's image | 8000 | migrate done, redis and postgres healthy |
-| `consumer` | this repo's image | 8002 (metrics only, D40z) | migrate done, redis and kafka healthy |
-| `stub` | this repo's image | 8001 | migrate done, api and kafka healthy |
+| `consumer` | this repo's image | 8002 (metrics only, D40z) | migrate and topics done, redis and kafka healthy |
+| `stub` | this repo's image | 8001 | migrate and topics done, api and kafka healthy |
 | `postgres` | `postgres:18.6` | 5433 | |
-| `redis` | official Redis image, tag pinned in Phase 1 | 6379 | |
+| `redis` | `redis:8.10.3` (D42) | 6379 | |
 | `kafka` | `apache/kafka:4.3.1` | 19092 | |
 
 The ports avoid tally's (D31), so both stacks run at once for `make e2e`.
