@@ -1,0 +1,170 @@
+# The risk engine's local stack (architecture.md section 5). Start it with `make up`, which passes
+# .env, or .env.example when there is no .env, so the credentials below come from one place.
+# Every port is bound to 127.0.0.1 and avoids tally's ports, so both stacks run at once (D31).
+name: risk-engine
+
+x-app: &app
+  # One image for the API, the consumer, the stub and migrate (D40j), built from this repo.
+  image: risk-engine:local
+  build:
+    context: .
+  environment: &app-env
+    DATABASE_URL: postgresql://${POSTGRES_USER:?set in .env or .env.example}:${POSTGRES_PASSWORD:?set in .env or .env.example}@postgres:5432/${POSTGRES_DB:?set in .env or .env.example}
+    REDIS_URL: redis://redis:6379/0
+    KAFKA_BOOTSTRAP: kafka:9092
+
+x-http-healthcheck: &http-healthcheck
+  interval: 10s
+  timeout: 5s
+  retries: 5
+  start_period: 30s
+  start_interval: 1s
+
+services:
+  postgres:
+    image: postgres:18.6
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set in .env or .env.example}
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env or .env.example}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env or .env.example}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      # PostgreSQL 18+ images keep a version-specific PGDATA below /var/lib/postgresql.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+      start_interval: 1s
+
+  redis:
+    image: redis:8.10.3
+    # Redis is rebuildable and never the source of truth (D40r), so nothing is saved to disk.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+      start_interval: 1s
+
+  # Single-node KRaft, configured like tally's broker. INTERNAL serves the other containers;
+  # HOST serves tests and the bench on this machine.
+  kafka:
+    image: apache/kafka:4.3.1
+    ports:
+      - "127.0.0.1:19092:19092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093,HOST://:19092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,HOST://127.0.0.1:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      # One node cannot satisfy the default replication factor of 3.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Topics come only from the topics service, never from a client touching a new name (D42).
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+      start_interval: 2s
+
+  # One-shot: creates ledger.entries with tally's 3 partitions, or checks an existing one (D42).
+  topics:
+    image: apache/kafka:4.3.1
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists
+        --topic ledger.entries --partitions 3 --replication-factor 1
+        && /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --describe --topic ledger.entries
+        | grep -q 'PartitionCount: 3'
+        || { echo 'ledger.entries must exist with 3 partitions' >&2; exit 1; }
+    restart: "no"
+
+  # One-shot: applies the SQL migrations (D40w).
+  migrate:
+    <<: *app
+    command: ["python", "-m", "risk.migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *app
+    command: ["uvicorn", "risk.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      <<: *http-healthcheck
+      test: ["CMD", "python", "-c", "import sys, urllib.request; urllib.request.urlopen(sys.argv[1], timeout=4)", "http://127.0.0.1:8000/health"]
+
+  consumer:
+    <<: *app
+    command: ["python", "-m", "risk.features.consumer"]
+    environment:
+      <<: *app-env
+      CONSUMER_METRICS_PORT: "8002"
+    ports:
+      - "127.0.0.1:8002:8002"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      topics:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      <<: *http-healthcheck
+      test: ["CMD", "python", "-c", "import sys, urllib.request; urllib.request.urlopen(sys.argv[1], timeout=4)", "http://127.0.0.1:8002/metrics"]
+
+  stub:
+    <<: *app
+    command: ["uvicorn", "ledger_stub.app:app", "--host", "0.0.0.0", "--port", "8001"]
+    ports:
+      - "127.0.0.1:8001:8001"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      topics:
+        condition: service_completed_successfully
+      api:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      <<: *http-healthcheck
+      test: ["CMD", "python", "-c", "import sys, urllib.request; urllib.request.urlopen(sys.argv[1], timeout=4)", "http://127.0.0.1:8001/health"]
+
+volumes:
+  postgres-data:
