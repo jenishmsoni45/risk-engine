@@ -1,0 +1,63 @@
+[project]
+name = "risk-engine"
+version = "0.1.0"
+description = "Streaming risk decision engine for the tally ledger"
+requires-python = "==3.12.*"
+# Direct dependencies are pinned exactly and come only from D40s's list (D41).
+dependencies = [
+    "confluent-kafka==2.16.0",
+    "fastapi==0.162.0",
+    "prometheus-client==0.26.0",
+    "psycopg[binary]==3.3.6",
+    "redis==8.1.0",
+    "uvicorn==0.54.0",
+]
+
+[dependency-groups]
+# httpx is on D40s's runtime list; until the stub calls the decision API (Phase 2), only the tests use it.
+dev = [
+    "httpx==0.28.1",
+    "mypy==2.4.0",
+    "pip-audit==2.10.1",
+    "pytest==9.1.1",
+    "ruff==0.17.2",
+]
+
+# Install safeguards (D41), enforced by tests/unit/test_dependency_safety.py.
+[tool.uv]
+# risk/ and ledger_stub/ are imported from the repo root; the project is never built.
+package = false
+# A fixed UTC time at least 7 days before the day it was set (2026-11-01).
+exclude-newer = "2026-10-25T00:00:00Z"
+# Wheels only: no package's build code runs at install.
+no-build = true
+# Use the Python 3.12 already on the machine or in the image.
+python-downloads = "never"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "N", "UP", "B", "A", "S", "BLE", "SIM", "PT", "RET", "RUF",
+    "ASYNC", "PTH", "C4", "T20",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert, and drive docker and git through subprocess with fixed argument lists.
+"tests/**" = ["S101", "S603", "S607"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["risk", "ledger_stub", "tests"]
+# tests/ has no __init__.py; module names start at the repo root (tests.helpers).
+explicit_package_bases = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Test files in different folders may share a name (tests/unit and tests/integration).
+addopts = ["--import-mode=importlib", "-ra", "--strict-markers"]
+pythonpath = ["."]
+xfail_strict = true
