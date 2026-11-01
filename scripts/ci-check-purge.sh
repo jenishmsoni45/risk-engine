@@ -26,7 +26,10 @@ for image in $images; do
     fail "$image is pinned, unused and still present"
   fi
 done
-if [ -d "$cache_dir" ] && [ -n "$(ls -A "$cache_dir")" ]; then
-  fail "uv's cache at $cache_dir is not empty"
+# `uv cache clean` keeps the folder and its .lock file, so other uv processes waiting on the lock
+# share it (uv 0.13.6, crates/uv-cache, Cache::clear). Anything else left is cached content.
+if [ -d "$cache_dir" ]; then
+  left=$(ls -A "$cache_dir" | grep -vx '.lock' || true)
+  [ -z "$left" ] || fail "uv's cache at $cache_dir still holds: $(echo $left)"
 fi
 echo "make purge: OK"
