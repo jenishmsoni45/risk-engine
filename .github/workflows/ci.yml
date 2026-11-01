@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  # Branches are built through their pull request; building the push too would run everything twice.
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    # Ubuntu 24.04 ships Python 3.12, which uv uses as is (python-downloads = "never", D41).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      # Actions are pinned to commits (D42).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.13.6"
+          # SHA-256 of uv-x86_64-unknown-linux-gnu.tar.gz in uv's 0.13.6 release.
+          checksum: "f29c3e94ffabd7e6f3ba521dba169a9b7ec12100bf3257087f0f24f6123f3645"
+          enable-cache: false
+
+      - name: Install the locked dependencies
+        run: make sync
+
+      - name: Lint
+        run: make lint
+
+      - name: Audit
+        run: make audit
+
+      - name: Test (starts the Compose stack)
+        run: make test
+
+      - name: Show the stack's logs
+        if: failure()
+        run: docker compose --env-file .env.example logs --no-color
+
+      - name: make down leaves no container (Phase 1, criterion 3)
+        run: |
+          make down
+          test -z "$(docker compose --env-file .env.example ps --all --quiet)"
+
+      - name: make clean (Phase 1, criterion 12)
+        run: scripts/ci-check-clean.sh
+
+      - name: make purge (Phase 1, criterion 13)
+        run: scripts/ci-check-purge.sh
