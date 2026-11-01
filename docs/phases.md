@@ -4,7 +4,7 @@ Phases 1 to 8 from PLAN.md section 6. Each phase is one PR, started only when th
 
 ## Phase 1 · Scaffold (Nov 16)
 
-**Scope.** The layout of PLAN.md section 7; `pyproject.toml` and `uv.lock` for Python 3.12; ruff and mypy settings; one Dockerfile for the decision API, consumer, stub and `migrate`; `docker-compose.yml` with Redis, Postgres, Kafka, `migrate`, `api`, `consumer` and `stub` (D31, D40j); health checks; the migration runner (D40w); `GET /health` on the API and the stub, `GET /metrics` on all three (D40t); the `ledger.entries` topic; `.env.example`; a Makefile with `up`, `down`, `test`, `lint` and `audit`; the CI workflow.
+**Scope.** The layout of PLAN.md section 7; `pyproject.toml` and `uv.lock` for Python 3.12; ruff and mypy settings; one Dockerfile for the decision API, consumer, stub and `migrate`; `docker-compose.yml` with Redis, Postgres, Kafka, `migrate`, `api`, `consumer` and `stub` (D31, D40j); health checks; the migration runner (D40w); `GET /health` on the API and the stub, `GET /metrics` on all three (D40t); the `ledger.entries` topic; `.env.example`; a Makefile with `up`, `down`, `test`, `lint`, `audit`, `clean` and `purge` (D41); the install safeguards in `pyproject.toml` (D41); the CI workflow.
 
 **Acceptance criteria**
 1. The phase starts by running `uv --version`; if it fails, work stops and the owner is asked (D28).
@@ -17,8 +17,11 @@ Phases 1 to 8 from PLAN.md section 6. Each phase is one PR, started only when th
 8. Running `migrate` twice applies each migration once. (`tests/integration/test_migrate.py`)
 9. `.env` and `data/` are git-ignored, and `.env.example` holds only dummy values. (`tests/unit/test_repo_hygiene.py`)
 10. `make lint` (ruff check, ruff format check, mypy), `make test` and `make audit` pass locally, and CI runs the same three with the Compose stack and is green on the PR.
+11. D41's safeguards stay on: `pyproject.toml` sets `exclude-newer` to a fixed UTC time, `no-build = true`, `python-downloads = "never"` and `package = false`; every direct dependency is on D40s's list; every locked package comes from PyPI and has a wheel; and every install in the Makefile, the Dockerfile and CI uses `uv sync --locked`. (`tests/unit/test_dependency_safety.py`)
+12. `make clean` leaves no container, volume or network of this project, no image built from this repo and no `.venv`, and leaves `data/`, `.env` and every tracked file as they were. (a CI step after the tests: a file is put in `data/` and a dummy `.env` is written, then `make clean` runs, then the checks)
+13. `make purge` also removes every image this repo pins that no container uses, and empties uv's cache. (a CI step after criterion 12's)
 
-**Tests to add.** `tests/integration/test_stack.py`, `tests/integration/test_migrate.py`, `tests/unit/test_repo_hygiene.py`.
+**Tests to add.** `tests/integration/test_stack.py`, `tests/integration/test_migrate.py`, `tests/unit/test_repo_hygiene.py`, `tests/unit/test_dependency_safety.py`.
 
 **Out of scope.** Any decision, feature or rule logic; the stub's `POST /transfers`.
 
