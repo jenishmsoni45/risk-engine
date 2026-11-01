@@ -9,7 +9,6 @@ migration is never edited; a change is a new file.
 
 from __future__ import annotations
 
-import argparse
 import logging
 import re
 import sys
@@ -47,6 +46,8 @@ class Migration:
 
 def discover(directory: Path) -> list[Migration]:
     """The .sql files in directory, by version. Other files (a README) are ignored."""
+    if not directory.is_dir():
+        raise MigrationError(f"{directory}: no such migrations folder")
     found: dict[int, Migration] = {}
     for path in sorted(directory.glob("*.sql")):
         match = FILE_NAME.fullmatch(path.name)
@@ -87,13 +88,10 @@ def apply(conninfo: str, directory: Path = MIGRATIONS_DIR) -> list[int]:
     return applied_now
 
 
-def main(argv: list[str] | None = None) -> int:
+def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    parser = argparse.ArgumentParser(description="Apply the SQL migrations in order.")
-    parser.add_argument("--dir", type=Path, default=MIGRATIONS_DIR, help="migrations folder")
-    args = parser.parse_args(argv)
     try:
-        applied = apply(settings.database_url(), args.dir)
+        applied = apply(settings.database_url())
     except (MigrationError, psycopg.Error, RuntimeError) as exc:
         log.error("migrate failed: %s", exc)
         return 1

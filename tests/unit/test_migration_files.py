@@ -40,5 +40,10 @@ def test_version_zero_is_refused(tmp_path: Path) -> None:
         discover(tmp_path)
 
 
+def test_a_missing_folder_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(MigrationError, match="no such migrations folder"):
+        discover(tmp_path / "nope")
+
+
 def test_the_repo_migrations_follow_the_rules() -> None:
     discover(MIGRATIONS_DIR)
