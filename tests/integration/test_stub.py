@@ -19,7 +19,7 @@ import pytest
 
 from ledger_stub.transfers import ENTRY_FIELDS
 from tests.fake_risk import FakeRisk, decided, raw
-from tests.helpers import STUB_URL, TopicTail, count, database, unique
+from tests.helpers import STUB_URL, TRACEPARENT, TopicTail, count, database, text_headers, unique
 from tests.stub_process import running_stub
 
 KEY_REUSED = "Idempotency-Key was already used for a different request"
@@ -82,7 +82,10 @@ def test_allow_round_trip() -> None:
     event = json.loads(message.value() or b"")
     assert event == entry
     assert event["decisionId"] is not None
-    assert message.headers() is None
+    # One header, a W3C trace context, as tally sends (D44).
+    (header,) = text_headers(message)
+    assert header[0] == "traceparent"
+    assert TRACEPARENT.fullmatch(header[1])
     # The join of US9: the event's decisionId is a decision in the log, the one that allowed it.
     with database() as conn:
         row = conn.execute(

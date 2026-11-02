@@ -1,0 +1,12 @@
+{
+  "topic": "ledger.entries",
+  "partition": 1,
+  "key": "e130cacc-8b4f-4fb9-8dde-4efd49d4dbc1",
+  "headers": [
+    [
+      "traceparent",
+      "00-d54dd050354c3d6b615de48995e8da6c-83cbfcf457048748-03"
+    ]
+  ],
+  "value": "{\"id\": \"e130cacc-8b4f-4fb9-8dde-4efd49d4dbc1\", \"kind\": \"transfer\", \"lines\": [{\"id\": 30211, \"amount\": -2500, \"currency\": \"CAD\", \"accountId\": \"1f5295d5-2cda-409a-bfa1-6ea1af6165dc\"}, {\"id\": 30212, \"amount\": 2500, \"currency\": \"CAD\", \"accountId\": \"ab5231da-bfa7-4e43-bcbd-d043668f684c\"}], \"createdAt\": \"2026-11-02T16:00:11.450510Z\", \"riskCheck\": \"fallback\", \"decisionId\": null, \"reversesId\": null, \"description\": \"fixture: fallback\", \"effectiveAt\": \"2026-11-02T16:00:11.450510Z\"}"
+}

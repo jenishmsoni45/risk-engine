@@ -55,11 +55,19 @@ def main() -> int:
             key = (message.key() or b"").decode()
             if key in wanted and wanted[key] not in found:
                 value = message.value() or b""
+                headers = message.headers()
+                pairs = headers.items() if isinstance(headers, dict) else (headers or [])
                 found[wanted[key]] = {
                     "topic": message.topic(),
                     "partition": message.partition(),
                     "key": key,
-                    "headers": message.headers(),
+                    # [name, value as text] pairs; null when the message has none.
+                    "headers": None
+                    if headers is None
+                    else [
+                        [name, raw.decode() if isinstance(raw, bytes) else (raw or "")]
+                        for name, raw in pairs
+                    ],
                     "value": value.decode(),
                 }
     finally:

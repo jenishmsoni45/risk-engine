@@ -122,6 +122,8 @@ DECISIONS = ("allow", "hold", "block")
 CANONICAL_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 # D40m: a bounded call must end within its timeout plus this margin.
 TIMING_MARGIN_S = 0.1
+# The one header on a ledger event (D44): a W3C trace context.
+TRACEPARENT = re.compile(r"00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}")
 
 
 def unique(prefix: str) -> str:
@@ -168,6 +170,13 @@ def count(sql: str, params: tuple[Any, ...] = ()) -> int:
 
 
 # --- ledger.entries --------------------------------------------------------------------------
+
+
+def text_headers(message: Message) -> list[tuple[str, str]]:
+    """A message's headers as (name, text) pairs; the client's types allow str or bytes."""
+    headers = message.headers()
+    pairs = headers.items() if isinstance(headers, dict) else (headers or [])
+    return [(name, raw.decode() if isinstance(raw, bytes) else (raw or "")) for name, raw in pairs]
 
 
 class TopicTail:
