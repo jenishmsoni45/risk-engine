@@ -1,0 +1,5 @@
+# The active rule set (design.md 1.4), read once at startup (D27). Rules arrive in Phase 4.
+version: 1
+default: allow
+on_timeout: hold
+rules: []

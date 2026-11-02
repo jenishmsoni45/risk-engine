@@ -7,16 +7,18 @@ requires-python = "==3.12.*"
 dependencies = [
     "confluent-kafka==2.16.0",
     "fastapi==0.162.0",
+    "httpx==0.28.1",
     "prometheus-client==0.26.0",
-    "psycopg[binary]==3.3.6",
+    # The pool extra brings psycopg-pool, from psycopg's maintainers (D43).
+    "psycopg[binary,pool]==3.3.6",
+    "pyyaml==6.0.3",
     "redis==8.1.0",
     "uvicorn==0.54.0",
 ]
 
 [dependency-groups]
-# httpx is on D40s's runtime list; until the stub calls the decision API (Phase 2), only the tests use it.
 dev = [
-    "httpx==0.28.1",
+    "hypothesis==6.170.9",
     "mypy==2.4.0",
     "pip-audit==2.10.1",
     "pytest==9.1.1",
@@ -47,13 +49,21 @@ select = [
 [tool.ruff.lint.per-file-ignores]
 # Tests assert, and drive docker and git through subprocess with fixed argument lists.
 "tests/**" = ["S101", "S603", "S607"]
+# Command-line scripts report on standard output.
+"scripts/**" = ["T201"]
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["risk", "ledger_stub", "tests"]
+files = ["risk", "ledger_stub", "tests", "scripts"]
 # tests/ has no __init__.py; module names start at the repo root (tests.helpers).
 explicit_package_bases = true
+
+# PyYAML ships no type hints, and its stub package isn't on D40s's list; risk/rules/ruleset.py
+# checks the type of every value it reads instead.
+[[tool.mypy.overrides]]
+module = ["yaml"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

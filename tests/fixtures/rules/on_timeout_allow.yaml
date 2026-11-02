@@ -1,0 +1,6 @@
+# A second rule set for tests/integration/test_decision_api.py::test_replay_current_on_timeout:
+# a new version whose backup answer is allow.
+version: 2
+default: allow
+on_timeout: allow
+rules: []

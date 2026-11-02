@@ -1,0 +1,12 @@
+{
+  "topic": "ledger.entries",
+  "partition": 0,
+  "key": "433d3527-a553-4393-a6eb-1b2b8ba800ca",
+  "headers": [
+    [
+      "traceparent",
+      "00-d54dd050354c3d6b615de48995e8da6c-205360e498b1e511-03"
+    ]
+  ],
+  "value": "{\"id\": \"433d3527-a553-4393-a6eb-1b2b8ba800ca\", \"kind\": \"entry\", \"lines\": [{\"id\": 30209, \"amount\": -100000, \"currency\": \"CAD\", \"accountId\": \"8b8c57bd-3f33-4faf-9664-4d0ce0adabe8\"}, {\"id\": 30210, \"amount\": 100000, \"currency\": \"CAD\", \"accountId\": \"1f5295d5-2cda-409a-bfa1-6ea1af6165dc\"}], \"createdAt\": \"2026-11-02T16:00:11.409280Z\", \"riskCheck\": \"none\", \"decisionId\": null, \"reversesId\": null, \"description\": \"fixture: funding\", \"effectiveAt\": \"2026-11-02T16:00:11.409280Z\"}"
+}
