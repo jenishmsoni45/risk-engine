@@ -1,5 +1,32 @@
-# The active rule set (design.md 1.4), read once at startup (D27). Rules arrive in Phase 4.
+# The active rule set (design.md 1.4), read once at startup (D27): D20's six starter rules.
+# Amounts are minor units and assume CAD (D20). The thresholds are starting guesses, not
+# measurements; 2b's backtest measures them.
 version: 1
 default: allow
 on_timeout: hold
-rules: []
+rules:
+  - id: velocity_1m
+    action: hold
+    all:
+      - { feature: out_count_1m, op: ">=", value: 5 }
+  - id: attempt_burst_1m
+    action: block
+    all:
+      - { feature: attempt_count_1m, op: ">=", value: 10 }
+  - id: daily_outflow_24h
+    action: hold
+    all:
+      - { feature: out_sum_24h, op: ">=", value: 2500000 }
+  - id: large_transfer
+    action: hold
+    all:
+      - { feature: amount, op: ">=", value: 1000000 }
+  - id: dest_fan_in_1h
+    action: hold
+    all:
+      - { feature: dest_in_count_1h, op: ">=", value: 20 }
+  - id: pass_through_1h
+    action: hold
+    all:
+      - { feature: in_sum_1h, op: ">=", value: 200000 }
+      - { feature: amount, op: ">=", value: 200000 }
