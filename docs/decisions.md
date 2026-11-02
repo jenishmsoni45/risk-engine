@@ -409,6 +409,36 @@ Two questions the docs didn't settle, asked before any Phase 4 code.
 - Answer: **wipe the local data and rerun; the gap is a follow-up** (owner). The Phase 4 PR lists it under Follow-ups, next to Phase 5's rebuild and fault tests. No code or doc changes in Phase 4.
 - Why: the failure comes from test data left by earlier runs, not from the rules, and keeps Phase 4 to rules only.
 
+### D48. Gaps found at the start of Phase 5 (2026-11-02)
+
+Eight questions the docs didn't settle, or that earlier phases left to this one, asked before any Phase 5 code.
+
+1. **Where the rebuild starts once the watermark is gone.** design.md 3.5 replays `ledger.entries` from the offsets for `wm − 24 h − 5 min`, but a Redis flush loses `wm` with everything else.
+   - Options: from the topic's start when `wm` is missing, else from the offsets for `wm − 24 h − 5 min`; always from the topic's start; keep a copy of `wm` in Postgres.
+   - Answer: **from the topic's start when `wm` is missing** (owner). An event older than the retained range is dropped as late, or trimmed once newer events raise the watermark, so the result is the same as starting later, only slower. design.md 3.5 now says so.
+2. **The hot-account bench.** design.md 12 asks for p99 against the size of one sender's 24 h window without saying how the window grows.
+   - Options: preload the window to fixed sizes and measure each at a fixed rate; one long run at a fixed rate, grouping latencies by window size afterwards; the doubling rate steps with one sender.
+   - Answer: **preloaded sizes at a fixed rate** (owner). The hot sender's 24 h window is filled through Kafka to 1,000, then 10,000, 100,000 and 1,000,000 events; at each size the bench sends 50 requests a second straight to the decision API for 3 minutes, and stops after the first size whose p99 passes 50 ms. design.md 12 now says so.
+   - Why: one cause at a time, so the table shows which size breaks p99.
+3. **How long the stub waits for a frozen Postgres** (left to this phase by D45.3).
+   - Options: 5 s, then 503; tally's 35 s socket timeout; test a stopped Postgres instead of a paused one.
+   - Answer: **5 s, then 503** (owner). Each database step of the stub gives up after 5 s, the statement timeout it already copies from tally's transaction timeout, and the stub answers tally's 503 for its database. tally waits up to its 35 s socket timeout on a silent network, so the stub answers sooner: a known difference. design.md 1.3 now says so.
+4. **D47's follow-up, and the postmortem's bug.**
+   - Options: fix it now and write the postmortem on it; fix it now and write the postmortem on D44; leave it as a follow-up.
+   - Answer: **fix it now, and `docs/postmortem.md` tells it** (owner). Kafka keeps its log in a named volume, so the log lasts as long as Postgres's; `make clean` removes both (D41.6). This closes D47's follow-up.
+5. **The stub's other D45.3 follow-ups.**
+   - Options (any of): cap decision calls in flight at 100, as tally does; turn off uvicorn's access log.
+   - Answer: **both** (owner). The stub has at most 100 decision calls in flight; a call over that is no decision at once, with tally's outcome tag `unavailable`, and gets the backup answer (tally's `docs/risk-decision-call.md`). The decision API and the stub write no access log line per request; their counters count requests. design.md 1.3 now names the cap.
+6. **Where `make e2e`'s fresh stack lives.**
+   - Options: its own Compose project, removed at the end; wiping the normal stack's volumes.
+   - Answer: **its own Compose project**, `risk-engine-e2e` (owner), with its own volumes, removed at the end, so the normal stack's data is untouched. Its ports are the normal stack's, so `make e2e` first checks that the normal stack is stopped and says so if not. The consumer gains two settings, `CONSUMER_GROUP` and `CONSUMER_START`, for the new group that starts at the end of tally's topic. design.md 1.6 and architecture.md section 5 now say so.
+7. **What README.md says about how the project was built.** PLAN.md section 9 asks for a section on how Claude Code built it under the owner's plan and review; CLAUDE.md keeps any mention of Claude or AI out of commit messages and PR text, and says nothing of the README.
+   - Options: say it plainly; neutral wording that names no tool; the owner writes that paragraph.
+   - Answer: **say it plainly** (owner). Commit messages, PR titles and PR bodies still never mention it.
+8. **Who runs `make bench`.** Its steps take most of an hour with the laptop busy, and its results must come from a clean, committed tree.
+   - Options: run during the phase once the code is committed; the owner runs it.
+   - Answer: **run during the phase** (owner), once the code is committed; the results, and the README tables made from them, are committed in this phase's PR.
+
 ## Open questions
 
 - **O24. How 2b runs LightGBM on this Mac.** LightGBM's macOS wheel needs OpenMP from Homebrew (`libomp`), and CLAUDE.md allows no installs on the Mac. Options include running training, the backtest and shadow scoring only inside Docker, where the image provides OpenMP, or the owner installing libomp. To be decided before Phase 6 starts; nothing earlier depends on it.
