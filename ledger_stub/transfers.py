@@ -9,17 +9,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from risk.decisions import CANONICAL_UUID, CURRENCY, MAX_AMOUNT
+from risk.formats import CANONICAL_UUID, CURRENCY, IDEMPOTENCY_KEY, MAX_AMOUNT
 from risk.problems import FieldError
 from risk.timestamps import format_instant, parse_offset_timestamp
 
-IDEMPOTENCY_KEY = re.compile(r"[\x21-\x7E]{1,255}")
 MAX_DESCRIPTION = 500
 
 # JournalEntry's and JournalLine's record components, in order.

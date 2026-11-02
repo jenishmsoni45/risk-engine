@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -13,15 +12,10 @@ import redis.asyncio as aioredis
 from psycopg_pool import AsyncConnectionPool
 
 from risk import store
+from risk.formats import CANONICAL_UUID, CURRENCY, IDEMPOTENCY_KEY, MAX_AMOUNT
 from risk.problems import FieldError
 from risk.rules.ruleset import RuleSet
 from risk.timestamps import epoch_ms, parse_offset_timestamp, truncate_to_ms
-
-REQUEST_ID = re.compile(r"[\x21-\x7E]{1,255}")
-# RFC 9562's 8-4-4-4-12 form; hex digits are case-insensitive on input.
-CANONICAL_UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
-CURRENCY = re.compile(r"[A-Z]{3}")
-MAX_AMOUNT = 2**63 - 1
 
 WATERMARK_KEY = "wm"
 
@@ -69,7 +63,7 @@ def parse_request(body: bytes) -> DecisionRequest:
 
     request_id = field("requestId")
     if request_id is not None and not (
-        isinstance(request_id, str) and REQUEST_ID.fullmatch(request_id)
+        isinstance(request_id, str) and IDEMPOTENCY_KEY.fullmatch(request_id)
     ):
         errors.append(FieldError("requestId", "must be 1 to 255 printable ASCII characters"))
 

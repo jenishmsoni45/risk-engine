@@ -17,7 +17,7 @@ from typing import Any
 
 import httpx
 
-from risk.decisions import CANONICAL_UUID
+from risk.formats import CANONICAL_UUID
 from risk.settings import DECISIONS
 from risk.timestamps import format_instant
 

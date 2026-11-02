@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from risk.decisions import CANONICAL_UUID
+from risk.formats import CANONICAL_UUID
 from risk.timestamps import parse_event_timestamp, truncate_to_ms
 
 KINDS = ("transfer", "entry", "reversal")
