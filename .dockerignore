@@ -1,0 +1,9 @@
+# Only what the image needs; never .env, data/, .git or local caches.
+*
+!pyproject.toml
+!uv.lock
+!.python-version
+!docker/uv-requirements.txt
+!risk/
+!ledger_stub/
+**/__pycache__

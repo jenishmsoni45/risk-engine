@@ -1,6 +1,17 @@
 # Local environment and secrets
 .env
 
+# PaySim and any other local data (CLAUDE.md)
+data/
+
+# Python environment and tool caches (removed by `make clean`)
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+
 # Private working files (rough drafts, personal Claude Code settings)
 .local/
 .claude/settings.local.json

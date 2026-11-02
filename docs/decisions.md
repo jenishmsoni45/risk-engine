@@ -312,6 +312,43 @@ Not asked as questions: choices made inside the answers above while writing requ
 | y | Where feature arithmetic runs | the Redis script only fetches the members in range; counts and sums are computed in Python by the shared feature module | the offline pipeline calls the same function, so no feature logic is duplicated in Lua (CLAUDE.md) |
 | z | Consumer metrics port | the consumer's `GET /metrics` is published on 127.0.0.1:8002 | tests and the bench run on the host and read its counters; the port is not one of tally's |
 
+### D41. Keeping this Mac safe: installs, downloads and clean-up (2026-11-01)
+
+- Question: before Phase 1, the owner asked that nothing installed or downloaded for this project be unsafe, that the work run unattended without doing anything risky, and that one command remove everything the project put on the Mac, without changing any earlier decision.
+- Options: rely on exact pins and `make audit` alone (D40s, requirements.md); add install-time safeguards, checked by tests, and clean-up commands.
+- Answer: **the safeguards and the clean-up commands** (owner, 2026-11-01). This replaces one sentence of D28 ("uv then fetches Python 3.12 for the project into its own cache"); the rest of D28 stands.
+  1. **Release cutoff.** `[tool.uv] exclude-newer` is a fixed UTC time at least 7 days before the day it is set, so uv ignores every release newer than that. When `make audit` reports a vulnerability whose fix is newer than the cutoff, only that package's cutoff moves, with `exclude-newer-package`, in a PR that names the advisory; each such override gets its own entry here.
+  2. **Wheels only.** `no-build = true`, so no package's build code runs at install. The project itself is not built as a package (`package = false`; `risk/` is imported from the repo root), so no build backend is downloaded either. A package with no wheel for this Mac (macOS arm64) or for the image's Linux makes the install fail, and the owner is asked.
+  3. **No Python downloads.** `python-downloads = "never"`: uv uses the Python 3.12 already on the Mac, and the image's own Python in Docker.
+  4. **Locked installs only.** The Makefile, the Dockerfile and CI install with `uv sync --locked`, which refuses a lock that doesn't match `pyproject.toml` and checks every downloaded file against the lock's hash.
+  5. **Approved packages only.** Direct dependencies are exactly the D40s libraries the current phase uses. psycopg is installed as `psycopg[binary]`, which carries its own libpq, so nothing is needed on the Mac. Checked on PyPI on 2026-11-01: every D40s library has a wheel for macOS arm64 and Linux arm64 for Python 3.12. Each PR that changes `uv.lock` lists every package it adds or changes, direct and indirect.
+  6. **Clean-up.** `make clean` stops the stack and removes this project's containers, volumes and network and the image built from this repo, then `.venv` and the tool caches (`.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.hypothesis`, `__pycache__`). It never touches `data/`, `.env` or any tracked file. `make purge` runs `make clean`, then removes the images this repo pins and empties uv's cache. Docker refuses to remove an image that any container still uses, so tally's containers keep theirs, and tally pulls its pinned tags again if one was removed. `make purge` ends by printing the one step left to the owner: `brew uninstall uv`.
+- Why: pins and audits catch known problems after the fact. The cutoff, wheels-only and locked installs stop the usual supply-chain attacks (a fresh malicious release, code run at install time, a silently changed file) before anything runs, and tests keep them on, so they hold without anyone watching.
+- Consequences: Phase 1 adds the settings, `make clean`, `make purge`, `tests/unit/test_dependency_safety.py` and three acceptance criteria (phases.md). A security fix newer than the cutoff waits for an override approved in a PR. LightGBM's macOS wheel needs OpenMP (`brew install libomp`, per its PyPI page), which can't be installed on this Mac: O24.
+
+### D42. Gaps found at the start of Phase 1 (2026-11-01)
+
+Four questions the docs didn't settle, asked before any Phase 1 code, plus the image tags D31 left to Phase 1.
+
+1. **Who creates `ledger.entries`.**
+   - Options: a one-shot `topics` Compose service; the stub creates it at startup, as tally does with its `NewTopic` bean; `migrate` creates it.
+   - Answer: **a one-shot `topics` service** (owner). It runs on `apache/kafka:4.3.1` (no new image) once Kafka is healthy, creates the topic with `--if-not-exists`, 3 partitions and replication factor 1, and fails if the topic exists with another partition count. The consumer and the stub start only after it completes. The broker's automatic topic creation is off, so no topic appears by accident with the wrong partition count.
+   - Why: the topic exists before anything reads or writes it, so the consumer never subscribes to a missing topic, and `migrate` keeps its one job (D40w).
+   - Consequences: architecture.md gains the service in its component diagram and deployment table; phases.md's Phase 1 scope and criterion 2 name it.
+2. **How the Docker image gets uv.** Astral's `astral/uv` image is listed on Docker Hub as a community image, neither official nor from a verified publisher, so CLAUDE.md's image rule excludes it.
+   - Options: install uv from PyPI inside the image, hash-pinned; use `astral/uv` as an exception; no uv in the image (pip with a hashed export, which breaks D41.4).
+   - Answer: **from PyPI, hash-pinned** (owner). A build stage installs uv 0.13.6, the version on the Mac, from `docker/uv-requirements.txt` with `pip install --require-hashes --only-binary :all: --no-deps`, then runs `uv sync --locked --no-dev`. The final stage copies only the virtual environment, without uv.
+   - Note: uv 0.13.6 was uploaded to PyPI on 2026-10-27, after D41's cutoff. The cutoff governs `uv.lock`; keeping the image's uv equal to the Mac's keeps one lock format across both.
+3. **How CI gets uv.**
+   - Options: Astral's `setup-uv` action pinned to a commit; the same hash-pinned PyPI install on the runner.
+   - Answer: **`astral-sh/setup-uv` pinned to a commit** (owner): v10.3.2 at `07a047e608db84b3d8c06cd9a7c7dcc9c355c18e`, installing uv 0.13.6 checked against the SHA-256 of its Linux release archive, with the action's cache off. `actions/checkout` is pinned the same way (v7.0.1 at `3d3c42e5aac5ba805825da76410c181273ba90b1`). Both tags are more than 7 days old, in the spirit of D41.1.
+4. **Docker's build cache.** Building the image leaves layers in Docker's build cache, which `make clean` and `make purge` don't remove: Docker can't clear one project's build cache alone, and the local safety guard blocks `docker builder prune`.
+   - Options: `make purge` prints it as a step for the owner; `make purge` clears all build cache itself; leave it and document it.
+   - Answer: **print it as a step for the owner** (owner). `make purge` ends by printing two steps left to the owner: `docker builder prune` (which clears every project's build cache) and `brew uninstall uv`. This replaces "the one step left to the owner" in D41.6; the rest of D41 stands.
+5. **Image tags** (D31 left them to Phase 1): `redis:8.10.3` and the build base `python:3.12.16-slim-trixie`, the newest patch releases on Docker Hub on 2026-11-01. architecture.md's Redis row now names the tag.
+
 ## Open questions
 
-None. Every question from PLAN.md section 5 and every question found since is answered above. One answer is a deferral the owner chose: D30 (the AI-model rule) is confirmed at the start of Phase 7.
+- **O24. How 2b runs LightGBM on this Mac.** LightGBM's macOS wheel needs OpenMP from Homebrew (`libomp`), and CLAUDE.md allows no installs on the Mac. Options include running training, the backtest and shadow scoring only inside Docker, where the image provides OpenMP, or the owner installing libomp. To be decided before Phase 6 starts; nothing earlier depends on it.
+
+Every other question from PLAN.md section 5 and every question found since is answered above. One answer is a deferral the owner chose: D30 (the AI-model rule) is confirmed at the start of Phase 7.
