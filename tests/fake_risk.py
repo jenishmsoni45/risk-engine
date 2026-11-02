@@ -84,6 +84,23 @@ async def headers_only(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
     return await _until_closed(reader)
 
 
+async def trickle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> bool:
+    """Sends a valid 200 one byte every 30 ms: each read is quick, the whole body is not."""
+    body = json.dumps(
+        {"decisionId": str(uuid.uuid4()), "decision": "allow", "fired": [], "onTimeout": "allow"}
+    ).encode()
+    head = f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {len(body)}"
+    writer.write(head.encode() + b"\r\n\r\n")
+    try:
+        for i in range(len(body)):
+            writer.write(body[i : i + 1])
+            await writer.drain()
+            await asyncio.sleep(0.03)
+    except ConnectionError:
+        return False
+    return await _until_closed(reader)
+
+
 async def _read_request(reader: asyncio.StreamReader) -> bytes | None:
     try:
         head = await reader.readuntil(b"\r\n\r\n")

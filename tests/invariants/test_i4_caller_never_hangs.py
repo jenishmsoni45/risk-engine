@@ -15,7 +15,16 @@ from typing import Any
 import httpx
 import pytest
 
-from tests.fake_risk import FakeRisk, Responder, decided, headers_only, late, raw, silent
+from tests.fake_risk import (
+    FakeRisk,
+    Responder,
+    decided,
+    headers_only,
+    late,
+    raw,
+    silent,
+    trickle,
+)
 from tests.helpers import STUB_URL, TIMING_MARGIN_S, count, free_port, paused, unique
 from tests.stub_process import running_stub
 
@@ -38,6 +47,8 @@ MISBEHAVIOURS: dict[str, Responder] = {
     "never answers": silent,
     "answers late": late(0.3, decided("allow")),
     "sends headers and no body": headers_only,
+    # Each read is within any per-read timeout; only a deadline over the whole call ends it.
+    "sends the body a byte at a time": trickle,
     "answers 500": raw(500, b'{"status":500}'),
     # A valid decision in every way but its size.
     "sends a body over 16 KiB": raw(200, reply_body(fired=["x" * 17_000])),
