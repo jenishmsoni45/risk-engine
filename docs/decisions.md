@@ -347,6 +347,22 @@ Four questions the docs didn't settle, asked before any Phase 1 code, plus the i
    - Answer: **print it as a step for the owner** (owner). `make purge` ends by printing two steps left to the owner: `docker builder prune` (which clears every project's build cache) and `brew uninstall uv`. This replaces "the one step left to the owner" in D41.6; the rest of D41 stands.
 5. **Image tags** (D31 left them to Phase 1): `redis:8.10.3` and the build base `python:3.12.16-slim-trixie`, the newest patch releases on Docker Hub on 2026-11-01. architecture.md's Redis row now names the tag.
 
+### D43. Gaps found at the start of Phase 2 (2026-11-02)
+
+Three questions the docs didn't settle, asked before any Phase 2 code.
+
+1. **The features snapshot before Phase 3.** Phase 2 decides without window features, yet `features` is not null.
+   - Options: only `amount`; all 31 names with the window features at 0; an empty object.
+   - Answer: **only `amount`** (owner). Phase 2's rows store `{"amount": <amount>}`, the one feature that exists without the consumer. Phase 3 adds the 31-name check so that it applies to new rows and leaves Phase 2's rows as they were (`not valid`).
+   - Why: zeros would claim no activity where nothing was counted.
+2. **The lag when there is no watermark.** `feature_lag_ms` is `t − wm` and not null, but `wm` exists only once the consumer has applied an event: not on a fresh stack, not after Redis is lost, and not at all in Phase 2.
+   - Options: read a missing watermark as 0, the epoch; allow a null lag in that case only (a change to design.md that loosens I5).
+   - Answer: **a missing watermark reads as 0** (owner). The lag is then `t` in epoch milliseconds, which marks "no event applied yet", and the column stays not null. Anything that reports on lag leaves such rows out.
+   - Consequences: Phase 2's decision path reads `wm` from Redis; that read is the Redis call that Phase 2's criterion 6 pauses.
+3. **A Postgres connection pool.** Every decision reads and writes Postgres within the 60 ms deadline, and a new connection per request repeats the login handshake each time.
+   - Options: psycopg's own pool, `psycopg-pool`, from psycopg's maintainers and not on D40s's list; a small pool written here; a new connection per request.
+   - Answer: **`psycopg-pool`** (owner), installed through psycopg's `pool` extra as `psycopg[binary,pool]`. This adds it to D40s's runtime list; the rest of D40s and D41 stands. It is pure Python, so one wheel serves the Mac and the image.
+
 ## Open questions
 
 - **O24. How 2b runs LightGBM on this Mac.** LightGBM's macOS wheel needs OpenMP from Homebrew (`libomp`), and CLAUDE.md allows no installs on the Mac. Options include running training, the backtest and shadow scoring only inside Docker, where the image provides OpenMP, or the owner installing libomp. To be decided before Phase 6 starts; nothing earlier depends on it.
