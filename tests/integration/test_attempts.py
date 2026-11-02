@@ -76,8 +76,8 @@ def test_refused_attempts_count() -> None:
             )
             for n in range(9)
         ),
-        # Blocked by attempt_burst_1m: the held one is the 10th attempt the first of these sees,
-        # and the first is the 11th the second sees.
+        # Blocked by attempt_burst_1m: the first sees 10 earlier attempts, the held one among
+        # them, and the second sees 11, the first blocked one among them.
         *(
             decision_request(fromAccountId=str(sender), amount=100, requestedAt=iso_ms(t + n))
             for n in range(2)

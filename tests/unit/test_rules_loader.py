@@ -99,6 +99,18 @@ def test_every_operator_feature_and_both_actions_load() -> None:
     assert loaded[0].conditions[0].value == -15
 
 
+def test_a_merge_key_is_not_a_repeated_key() -> None:
+    """A YAML `<<` merge followed by a key it also brings is YAML's override, not a repeat (D46)."""
+    text = (
+        HEAD + "rules:\n"
+        "  - &base { id: a, action: hold, all: [{ feature: amount, op: '>=', value: 1 }] }\n"
+        "  - { <<: *base, id: b, action: block }\n"
+    )
+    loaded = parse(text.encode(), "f").rules
+    assert [(r.id, r.action) for r in loaded] == [("a", "hold"), ("b", "block")]
+    assert loaded[0].conditions == loaded[1].conditions
+
+
 def test_the_limits_themselves_load() -> None:
     """At most 100 rules (D40x) and ids of up to 64 characters of a-z, 0-9 and _."""
     longest = [f"r{n:03d}_".ljust(64, "x") for n in range(MAX_RULES)]
@@ -122,6 +134,7 @@ BROKEN: dict[str, tuple[str, str]] = {
         "not YAML",
     ),
     "a Python tag": (GOOD + "x: !!python/object:os.system {}\n", "not YAML"),
+    "an unhashable key": (GOOD + "? [1]\n: x\n", "not YAML"),
     "an empty file": ("", "the file must be a mapping"),
     "not a mapping": ("- 1\n- 2\n", "the file must be a mapping"),
     # Missing and unknown keys, at every level.
