@@ -60,6 +60,49 @@ def test_every_new_decision_adds_one_attempt_and_a_replay_none() -> None:
     assert attempt_set(sender) == expected_set(bodies)
 
 
+def test_refused_attempts_count() -> None:
+    """Phase 4, criterion 5: held and blocked decisions add attempts too (D18)."""
+    sender = uuid.uuid4()
+    t = now_ms()
+    bodies = [
+        # Held by large_transfer, with no earlier attempt.
+        decision_request(
+            fromAccountId=str(sender), amount=1_000_000, requestedAt=iso_ms(t - 50_000)
+        ),
+        # Allowed: one to nine earlier attempts, under attempt_burst_1m's 10.
+        *(
+            decision_request(
+                fromAccountId=str(sender), amount=100 + n, requestedAt=iso_ms(t - 45_000 + n * 4000)
+            )
+            for n in range(9)
+        ),
+        # Blocked by attempt_burst_1m: the first sees 10 earlier attempts, the held one among
+        # them, and the second sees 11, the first blocked one among them.
+        *(
+            decision_request(fromAccountId=str(sender), amount=100, requestedAt=iso_ms(t + n))
+            for n in range(2)
+        ),
+    ]
+    answers = []
+    for body in bodies:
+        response = post_decision(body)
+        assert response.status_code == 200
+        answers.append((response.json()["decision"], response.json()["fired"]))
+    assert answers == [
+        ("hold", ["large_transfer"]),
+        *[("allow", [])] * 9,
+        *[("block", ["attempt_burst_1m"])] * 2,
+    ]
+    assert attempt_set(sender) == expected_set(bodies)
+
+    with database() as conn:
+        row = conn.execute(
+            "select features from decisions where request_id = %s", (bodies[-1]["requestId"],)
+        ).fetchone()
+    assert row is not None
+    assert row[0]["attempt_count_1m"] == 11
+
+
 def test_concurrent_duplicates_of_a_new_request_add_one_attempt() -> None:
     sender = uuid.uuid4()
     body = decision_request(fromAccountId=str(sender), requestedAt=iso_ms(now_ms()))

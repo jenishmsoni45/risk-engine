@@ -388,6 +388,27 @@ Three questions, asked before any Phase 3 code: one the docs didn't settle, and 
    - Options: the Starlette deprecation warning from Phase 1's health test; the stub's cap of 100 decision calls in flight; a bound on the stub's wait for a paused Postgres; turning off uvicorn's access log.
    - Answer: **only the test warning** (owner): the health test drops Starlette's TestClient for httpx alone, with the same checks and no new package. The other three stay with Phase 5, whose bench and fault tests measure what they need.
 
+### D46. Gaps found at the start of Phase 4 (2026-11-02)
+
+Two questions the docs didn't settle, asked before any Phase 4 code.
+
+1. **A key given twice in one mapping.** YAML requires the keys of a mapping to be unique, but PyYAML's loader keeps the last value of a repeated key without a word, so `value: 5` followed by `value: 50` in one condition would load as 50.
+   - Options: refuse the file; keep the last value, as the library does.
+   - Answer: **refuse the file** (owner). A repeated key at any level stops the service at startup with a message naming the key and its line, like any other invalid file (design.md 1.4, D27). No doc changes: design.md 1.4 already says that anything else stops the service.
+   - Why: a copy-paste slip must not silently change a threshold.
+2. **A changed file that keeps its version.** If the rules change and `version` doesn't, two rule sets answer as the same `ruleSet`, told apart only by the stored hash.
+   - Options: leave it, as a follow-up; refuse to start when the decision log already holds the version with a different hash.
+   - Answer: **a follow-up** (owner). Phase 4 adds no check; the PR lists it under Follow-ups.
+   - Why: D45.2 already accepted two files with version 1, and a check would need Postgres at startup.
+
+### D47. Kafka's log restarts while `bad_events` keeps its rows (2026-11-02)
+
+- Found during Phase 4's `make test`: six cases of `tests/adversarial/test_bad_events.py` (Phase 3) failed locally while CI, which starts empty, passes. Kafka keeps its log inside its container, so `make down` and `make up` start `ledger.entries` again at offset 0, while Postgres keeps its volume. `bad_events` is unique on `(topic, kafka_partition, kafka_offset)` (design.md section 2), so a new bad event at an offset an earlier log already used is taken as stored and skipped. The same reset also empties the log that `make rebuild-features` (Phase 5, design.md 3.5) replays.
+- Question: how to get Phase 4's run green, and when to fix the gap.
+- Options: wipe the local stack's data and rerun; fix the gap in this PR (a named volume for Kafka, so its log lasts as long as Postgres's); leave it as a follow-up.
+- Answer: **wipe the local data and rerun; the gap is a follow-up** (owner). The Phase 4 PR lists it under Follow-ups, next to Phase 5's rebuild and fault tests. No code or doc changes in Phase 4.
+- Why: the failure comes from test data left by earlier runs, not from the rules, and keeps Phase 4 to rules only.
+
 ## Open questions
 
 - **O24. How 2b runs LightGBM on this Mac.** LightGBM's macOS wheel needs OpenMP from Homebrew (`libomp`), and CLAUDE.md allows no installs on the Mac. Options include running training, the backtest and shadow scoring only inside Docker, where the image provides OpenMP, or the owner installing libomp. To be decided before Phase 6 starts; nothing earlier depends on it.

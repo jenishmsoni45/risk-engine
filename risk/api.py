@@ -131,9 +131,17 @@ async def record_attempt(engine: DecisionEngine, request: DecisionRequest) -> No
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # An invalid rule file stops the service here, before it serves anything (D27).
-    rules = ruleset.load(settings.rules_path())
+    try:
+        rules = ruleset.load(settings.rules_path())
+    except ruleset.RuleSetError as exc:
+        log.error("invalid rule file, not starting: %s", exc)
+        raise
     log.info(
-        "rule set %s loaded from %s, sha256 %s", rules.name, settings.rules_path(), rules.sha256
+        "rule set %s with %d rules loaded from %s, sha256 %s",
+        rules.name,
+        len(rules.rules),
+        settings.rules_path(),
+        rules.sha256,
     )
     deadline_ms = settings.decision_deadline_ms()
     deadline_s = deadline_ms / 1000

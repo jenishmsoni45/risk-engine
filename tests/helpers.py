@@ -228,6 +228,66 @@ def decision_row(**overrides: Any) -> dict[str, Any]:
     return row
 
 
+RULE_FIXTURES = ROOT / "tests" / "fixtures" / "rules"
+
+
+def api_run_args(name: str, rules_file: Path) -> list[str]:
+    """`docker compose run` arguments for a second decision API container, from the same image,
+    on the stack's Redis and Postgres and started from rules_file, so the API every other test
+    uses keeps running. The file's folder is mounted read-only; the container runs as an
+    unprivileged user, so the folder and the file must be world-readable."""
+    return [
+        "run",
+        "--rm",
+        "--no-deps",
+        "--name",
+        name,
+        "--volume",
+        f"{rules_file.parent}:/rules:ro",
+        "--env",
+        f"RULES_PATH=/rules/{rules_file.name}",
+    ]
+
+
+@contextmanager
+def api_with_rules(rules_file: Path) -> Iterator[str]:
+    """The base URL of a second decision API started from rules_file, until the block ends."""
+    name = unique("risk-engine-api-restarted")
+    port = free_port()
+    compose(
+        *api_run_args(name, rules_file), "--detach", "--publish", f"127.0.0.1:{port}:8000", "api"
+    )
+    url = f"http://127.0.0.1:{port}"
+    try:
+        deadline = time.monotonic() + 60
+        while True:
+            try:
+                if httpx.get(f"{url}/health", timeout=2).status_code == 200:
+                    break
+            except httpx.TransportError:
+                pass
+            assert time.monotonic() < deadline, "the restarted API never became healthy"
+            time.sleep(0.2)
+        yield url
+    finally:
+        # --rm removes the container once it has stopped, a moment after `docker stop` returns;
+        # waiting for that keeps it out of the next test's `docker compose ps`.
+        subprocess.run(["docker", "stop", "--time", "5", name], capture_output=True, check=False)
+        wait_until_removed(name)
+
+
+def wait_until_removed(container: str, timeout: float = 30) -> None:
+    deadline = time.monotonic() + timeout
+    while (
+        subprocess.run(
+            ["docker", "container", "inspect", container], capture_output=True
+        ).returncode
+        == 0
+    ):
+        assert time.monotonic() < deadline, f"{container} was not removed"
+        time.sleep(0.2)
+
+
 def insert_decision(row: dict[str, Any]) -> None:
     """Inserts the row in a transaction that is always rolled back, so nothing is left behind."""
     statement = sql.SQL("insert into decisions ({}) values ({})").format(
