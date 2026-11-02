@@ -4,7 +4,8 @@ Every poll it locks up to a batch of unpublished rows (SKIP LOCKED, so several r
 the same row), sends them keyed by entry id, waits for every ack, then marks them published, all
 in one transaction. A batch that fails rolls back and is sent again on the next poll: delivery is
 at least once, and the consumer dedupes on the entry id. The value is the stored jsonb as text,
-exactly what tally publishes.
+exactly what tally publishes, and each event carries a W3C `traceparent` header, one trace per
+batch, as tally's relay sends (D44).
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import secrets
 import uuid
 
 from confluent_kafka import KafkaError, Message, Producer
@@ -53,7 +55,15 @@ def producer_config(bootstrap: str) -> dict[str, str | int | bool]:
         "enable.idempotence": True,
         "delivery.timeout.ms": 3000,
         "request.timeout.ms": 2000,
+        # Java's default partitioner for keyed records, so a key lands on the partition tally's
+        # producer would choose; librdkafka's own default hashes differently.
+        "partitioner": "murmur2_random",
     }
+
+
+def traceparent(trace_id: str) -> bytes:
+    """A W3C trace context with a new span id, flagged as tally's are (sampled, random id)."""
+    return f"00-{trace_id}-{secrets.token_hex(8)}-03".encode()
 
 
 class PublishError(Exception):
@@ -112,9 +122,14 @@ class Relay:
             if error is not None:
                 failures.append(str(error))
 
+        trace_id = secrets.token_hex(16)  # one trace per batch, like tally's relay
         for _, entry_id, payload in rows:
             self.producer.produce(
-                TOPIC, key=str(entry_id).encode(), value=payload.encode(), on_delivery=on_delivery
+                TOPIC,
+                key=str(entry_id).encode(),
+                value=payload.encode(),
+                headers=[("traceparent", traceparent(trace_id))],
+                on_delivery=on_delivery,
             )
         unacked = self.producer.flush(ACK_TIMEOUT_S)
         if unacked or failures:
