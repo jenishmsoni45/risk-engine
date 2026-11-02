@@ -6,12 +6,8 @@ from __future__ import annotations
 import json
 import re
 import socket
-import subprocess
 import time
 import uuid
-from collections.abc import Iterator
-from contextlib import contextmanager
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -21,13 +17,11 @@ from tests.helpers import (
     API_URL,
     CANONICAL_UUID,
     DECISIONS,
-    ROOT,
-    compose,
+    RULE_FIXTURES,
+    api_with_rules,
     count,
     decision_request,
-    free_port,
     post_decision,
-    unique,
 )
 
 FIELDS = {"decisionId", "decision", "ruleSet", "fired", "onTimeout"}
@@ -48,7 +42,7 @@ def test_response_shape() -> None:
     assert re.fullmatch(r"v[1-9][0-9]*", body["ruleSet"])
     assert isinstance(body["fired"], list)
     assert all(isinstance(rule, str) for rule in body["fired"])
-    # Phase 2's rule set: no rules, default allow, backup hold.
+    # New accounts and a small amount fire no starter rule: default allow, backup hold.
     assert (body["decision"], body["ruleSet"], body["fired"], body["onTimeout"]) == (
         "allow",
         "v1",
@@ -102,55 +96,7 @@ def test_bad_requests(body: Any) -> None:
 
 # --- Criterion 5: a replay after a restart with another rule set ---------------------------
 
-OTHER_RULES = ROOT / "tests" / "fixtures" / "rules" / "on_timeout_allow.yaml"
-
-
-@contextmanager
-def api_with_rules(rules_file: Path) -> Iterator[str]:
-    """A fresh decision API process on the stack's Redis and Postgres, started from rules_file.
-
-    A second container from the same image, so the API every other test uses keeps running.
-    """
-    name = unique("risk-engine-api-restarted")
-    port = free_port()
-    compose(
-        "run",
-        "--detach",
-        "--rm",
-        "--no-deps",
-        "--name",
-        name,
-        "--publish",
-        f"127.0.0.1:{port}:8000",
-        "--volume",
-        f"{rules_file.parent}:/rules:ro",
-        "--env",
-        f"RULES_PATH=/rules/{rules_file.name}",
-        "api",
-    )
-    url = f"http://127.0.0.1:{port}"
-    try:
-        deadline = time.monotonic() + 60
-        while True:
-            try:
-                if httpx.get(f"{url}/health", timeout=2).status_code == 200:
-                    break
-            except httpx.TransportError:
-                pass
-            assert time.monotonic() < deadline, "the restarted API never became healthy"
-            time.sleep(0.2)
-        yield url
-    finally:
-        # --rm removes the container once it has stopped, a moment after `docker stop` returns;
-        # waiting for that keeps it out of the next test's `docker compose ps`.
-        subprocess.run(["docker", "stop", "--time", "5", name], capture_output=True, check=False)
-        deadline = time.monotonic() + 30
-        while (
-            subprocess.run(["docker", "container", "inspect", name], capture_output=True).returncode
-            == 0
-        ):
-            assert time.monotonic() < deadline, f"{name} was not removed"
-            time.sleep(0.2)
+OTHER_RULES = RULE_FIXTURES / "on_timeout_allow.yaml"
 
 
 def test_replay_current_on_timeout() -> None:
