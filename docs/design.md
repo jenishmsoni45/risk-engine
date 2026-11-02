@@ -32,9 +32,10 @@ Unknown fields are ignored. Responses:
 
 ### 1.2 Ledger event: `ledger.entries`
 
-The format is tally's (D1, D7, D13): key = entry id; value = the entry JSON with `id`, `kind` (`transfer`, `entry`, `reversal`), `reversesId`, `description`, `effectiveAt`, `createdAt`, `decisionId`, `riskCheck` (`decided`, `fallback`, `none`) and `lines` (each `id`, `accountId`, `amount`, `currency`). No headers. The consumer:
+The format is tally's (D1, D7, D13): key = entry id; value = the entry JSON with `id`, `kind` (`transfer`, `entry`, `reversal`), `reversesId`, `description`, `effectiveAt`, `createdAt`, `decisionId`, `riskCheck` (`decided`, `fallback`, `none`) and `lines` (each `id`, `accountId`, `amount`, `currency`). One header, `traceparent`: the W3C trace context of the relay batch that published the event (D44). The consumer:
 
 - parses JSON; it never compares bytes, and ignores unknown fields;
+- ignores headers;
 - accepts timestamps with 0, 3, 6 or 9 fraction digits and a `Z`, and truncates them to the millisecond;
 - reads a missing `decisionId` as null and a missing `riskCheck` as `none` (events from before tally's V7);
 - treats as a bad event (stored, counted, skipped; D40i): a value that isn't JSON, a missing or wrongly typed required field, a key that differs from `id`, an unknown `kind`, no lines, a zero line amount, or lines that don't sum to zero per currency.
@@ -47,7 +48,7 @@ tally's transfer path (D24), on port 8001:
 - Responses, as tally gives them: 201 with the entry (the same JSON as its event); 400 validation; 403 `/problems/transfer-held` or `/problems/transfer-blocked` with `decisionId`; 409 for a key reused with a different body or a 409 from the decision API; 503 `/problems/risk-unavailable`; 503 when its own Postgres fails.
 - The same key and body replay the saved 201 without asking the decision API. Only a posted transfer saves its key.
 - The decision call follows tally-integration.md 3.2 to 3.4: 100 ms for the whole call, the backup answer from the latest `onTimeout` with default `hold`, a body over 16 KiB or breaking the contract treated as no decision (D40k).
-- Posting writes the entry to `stub.transfers` and its event to `stub.outbox` in one transaction; a relay loop publishes the outbox every 200 ms in batches of 100, keyed by entry id (D40k). The interval is configurable, and 0 publishes at once.
+- Posting writes the entry to `stub.transfers` and its event to `stub.outbox` in one transaction; a relay loop publishes the outbox every 200 ms in batches of 100, keyed by entry id (D40k), each event with a `traceparent` header, one trace per batch, as tally's relay sends (D44). The interval is configurable, and 0 publishes at once.
 - Timestamps are written like tally's: UTC, `Z`, a fraction of 0, 3 or 6 digits.
 - Replay mode (2b, `STUB_REPLAY=1` only): the `X-Replay-Time` header sets `requestedAt`, `createdAt` and `effectiveAt` (D40v), and every transfer is posted whatever the decision, with `riskCheck: decided` and its `decisionId` (D40u). In replay mode a transfer without a decision is answered 503 and not posted, so a replay never logs a transfer without a decision.
 

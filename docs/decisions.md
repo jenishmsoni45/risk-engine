@@ -363,6 +363,15 @@ Three questions the docs didn't settle, asked before any Phase 2 code.
    - Options: psycopg's own pool, `psycopg-pool`, from psycopg's maintainers and not on D40s's list; a small pool written here; a new connection per request.
    - Answer: **`psycopg-pool`** (owner), installed through psycopg's `pool` extra as `psycopg[binary,pool]`. This adds it to D40s's runtime list; the rest of D40s and D41 stands. It is pure Python, so one wheel serves the Mac and the image.
 
+### D44. tally's events carry a `traceparent` header (2026-11-02)
+
+- Found while capturing the Phase 2 fixtures (D25) from tally's `main` (PR #14's tree): every event on `ledger.entries` carries one Kafka header, `traceparent`, the W3C trace context of the relay batch that published it (tally's KafkaTemplate observation). Events published in one relay batch share a trace id and differ in span id; the flags are `03`. This replaces "No message headers" in D1; the rest of D1 stands.
+- Question: design.md 1.2 said "No headers". What does the stub send?
+- Options: copy the header, one trace per batch, as tally's relay does; send none and document that the consumer ignores headers.
+- Answer: **copy it** (owner). The stub's relay adds a `traceparent` to each event, with a new random trace id per batch and a new random span id per event. design.md 1.2 now names the header and says the consumer ignores headers; design.md 1.3 says the stub's relay sends it.
+- Why: the stub's events then match tally's in every part, so CI exercises the consumer with headers present, as real traffic has them.
+- Consequences: the contract test checks that tally's fixtures and the stub's events each carry exactly this one header, in the W3C format.
+
 ## Open questions
 
 - **O24. How 2b runs LightGBM on this Mac.** LightGBM's macOS wheel needs OpenMP from Homebrew (`libomp`), and CLAUDE.md allows no installs on the Mac. Options include running training, the backtest and shadow scoring only inside Docker, where the image provides OpenMP, or the owner installing libomp. To be decided before Phase 6 starts; nothing earlier depends on it.
