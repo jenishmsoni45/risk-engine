@@ -401,6 +401,14 @@ Two questions the docs didn't settle, asked before any Phase 4 code.
    - Answer: **a follow-up** (owner). Phase 4 adds no check; the PR lists it under Follow-ups.
    - Why: D45.2 already accepted two files with version 1, and a check would need Postgres at startup.
 
+### D47. Kafka's log restarts while `bad_events` keeps its rows (2026-11-02)
+
+- Found during Phase 4's `make test`: six cases of `tests/adversarial/test_bad_events.py` (Phase 3) failed locally while CI, which starts empty, passes. Kafka keeps its log inside its container, so `make down` and `make up` start `ledger.entries` again at offset 0, while Postgres keeps its volume. `bad_events` is unique on `(topic, kafka_partition, kafka_offset)` (design.md section 2), so a new bad event at an offset an earlier log already used is taken as stored and skipped. The same reset also empties the log that `make rebuild-features` (Phase 5, design.md 3.5) replays.
+- Question: how to get Phase 4's run green, and when to fix the gap.
+- Options: wipe the local stack's data and rerun; fix the gap in this PR (a named volume for Kafka, so its log lasts as long as Postgres's); leave it as a follow-up.
+- Answer: **wipe the local data and rerun; the gap is a follow-up** (owner). The Phase 4 PR lists it under Follow-ups, next to Phase 5's rebuild and fault tests. No code or doc changes in Phase 4.
+- Why: the failure comes from test data left by earlier runs, not from the rules, and keeps Phase 4 to rules only.
+
 ## Open questions
 
 - **O24. How 2b runs LightGBM on this Mac.** LightGBM's macOS wheel needs OpenMP from Homebrew (`libomp`), and CLAUDE.md allows no installs on the Mac. Options include running training, the backtest and shadow scoring only inside Docker, where the image provides OpenMP, or the owner installing libomp. To be decided before Phase 6 starts; nothing earlier depends on it.
