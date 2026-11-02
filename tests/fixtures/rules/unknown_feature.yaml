@@ -1,0 +1,10 @@
+# An invalid rule set for tests/integration/test_rules_startup.py: its one rule names a feature
+# that doesn't exist, so the decision API must refuse to start (D27).
+version: 1
+default: allow
+on_timeout: hold
+rules:
+  - id: velocity_2m
+    action: hold
+    all:
+      - { feature: out_count_2m, op: ">=", value: 5 }
