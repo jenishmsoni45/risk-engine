@@ -1,11 +1,14 @@
-"""The migration runner's naming rules (D40w), without a database."""
+"""The migration runner's naming rules (D40w), and the feature check's names, without a
+database."""
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 
+from risk.features.compute import FEATURE_NAMES
 from risk.migrate import MIGRATIONS_DIR, MigrationError, discover
 
 
@@ -47,3 +50,13 @@ def test_a_missing_folder_is_refused(tmp_path: Path) -> None:
 
 def test_the_repo_migrations_follow_the_rules() -> None:
     discover(MIGRATIONS_DIR)
+
+
+def test_the_feature_check_names_exactly_the_modules_31_features() -> None:
+    """0004's check spells the names twice (all present, nothing else); both lists must be
+    FEATURE_NAMES, or a valid snapshot would be refused or a wrong one accepted."""
+    sql = (MIGRATIONS_DIR / "0004_decision_feature_names.sql").read_text()
+    arrays = re.findall(r"array\[(.*?)\]", sql, flags=re.DOTALL)
+    assert len(arrays) == 2
+    for array in arrays:
+        assert tuple(re.findall(r"'([a-z0-9_]+)'", array)) == FEATURE_NAMES
