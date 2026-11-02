@@ -8,16 +8,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-import redis.asyncio as aioredis
 from psycopg_pool import AsyncConnectionPool
 
 from risk import store
+from risk.features.compute import features_at
+from risk.features.redis_store import FeatureStore
 from risk.formats import CANONICAL_UUID, CURRENCY, IDEMPOTENCY_KEY, MAX_AMOUNT
 from risk.problems import FieldError
 from risk.rules.ruleset import RuleSet
 from risk.timestamps import epoch_ms, parse_offset_timestamp, truncate_to_ms
-
-WATERMARK_KEY = "wm"
 
 
 class InvalidRequestError(Exception):
@@ -136,38 +135,29 @@ def answer_from(stored: store.StoredDecision) -> Answer:
     )
 
 
-class CorruptWatermarkError(Exception):
-    """`wm` in Redis isn't an integer, so no lag can be computed."""
-
-
-async def read_watermark(redis: aioredis.Redis) -> int:
-    """The latest createdAt the consumer applied, in epoch ms; 0 when there is none yet (D43)."""
-    raw = await redis.get(WATERMARK_KEY)
-    if raw is None:
-        return 0
-    try:
-        return int(raw)
-    except ValueError:
-        raise CorruptWatermarkError(f"{WATERMARK_KEY} holds {raw!r}") from None
-
-
 class DecisionEngine:
-    """Steps 3 to 7 of design.md section 4. The deadline and the 503 are risk/api.py's."""
+    """Steps 3 to 8 of design.md section 4. The deadline and the 503 are risk/api.py's."""
 
-    def __init__(self, rules: RuleSet, pool: AsyncConnectionPool, redis: aioredis.Redis) -> None:
+    def __init__(self, rules: RuleSet, pool: AsyncConnectionPool, features: FeatureStore) -> None:
         self.rules = rules
         self.pool = pool
-        self.redis = redis
+        self.features = features
 
     async def decide(self, request: DecisionRequest) -> Answer | Conflict:
+        """Steps 3 to 7: a stored decision, a 409, or a new decision row."""
         async with self.pool.connection() as conn:
             stored = await store.find(conn, request.request_id)
             if stored is not None:
                 return answer_from(stored) if request.same_transfer(stored) else Conflict()
 
-            # Phase 2 has no window features: the snapshot holds the amount alone (D43).
-            features = {"amount": request.amount}
-            lag_ms = epoch_ms(request.requested_at) - await read_watermark(self.redis)
+            # design.md 3.4: one script reads the five sets and the watermark; the shared module
+            # turns them into the 31 features at t. The lag is negative when the stream is ahead.
+            t_ms = epoch_ms(request.requested_at)
+            members, watermark_ms = await self.features.read(
+                request.from_account_id, request.to_account_id, t_ms
+            )
+            features = features_at(t_ms, request.amount, members)
+            lag_ms = t_ms - watermark_ms
             decision, fired = self.rules.evaluate(features)
             row = store.NewDecision(
                 decision_id=uuid.uuid4(),
@@ -193,3 +183,13 @@ class DecisionEngine:
             if winner is None:
                 raise RuntimeError(f"request {request.request_id!r} conflicted but has no row")
             return answer_from(winner) if request.same_transfer(winner) else Conflict()
+
+    async def record_attempt(self, request: DecisionRequest) -> None:
+        """Step 8 (design.md 3.3): called once the new row has committed, never for a replay, so a
+        retried requestId counts once (D18, D40g)."""
+        await self.features.record_attempt(
+            request.from_account_id,
+            request.request_id,
+            request.amount,
+            epoch_ms(request.requested_at),
+        )

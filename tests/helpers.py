@@ -4,19 +4,26 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 import socket
 import subprocess
 import time
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import httpx
 import psycopg
-from confluent_kafka import Consumer, Message, TopicPartition
+from confluent_kafka import Consumer, KafkaError, Message, Producer, TopicPartition
+from prometheus_client.parser import text_string_to_metric_families
+from psycopg import sql
+from psycopg.types.json import Jsonb
 
+from risk.features.compute import FEATURE_NAMES
+from risk.features.consumer import GROUP_ID
 from risk.settings import TOPIC
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -108,6 +115,25 @@ def postgres_conninfo(dbname: str | None = None, env: Mapping[str, str] | None =
     )
 
 
+def postgres_url() -> str:
+    """The stack's database as a URL, for a service run on this machine (DATABASE_URL)."""
+    values = read_env_file(env_file())
+    return (
+        f"postgresql://{values['POSTGRES_USER']}:{values['POSTGRES_PASSWORD']}"
+        f"@127.0.0.1:{POSTGRES_HOST_PORT}/{values['POSTGRES_DB']}"
+    )
+
+
+def metric(base_url: str, name: str, **labels: str) -> float:
+    """A sample from a service's GET /metrics; 0 when it hasn't been recorded yet."""
+    text = httpx.get(f"{base_url}/metrics", timeout=5).text
+    for family in text_string_to_metric_families(text):
+        for sample in family.samples:
+            if sample.name == name and sample.labels == labels:
+                return float(sample.value)
+    return 0.0
+
+
 def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -161,12 +187,55 @@ def decision_rows(request_id: str) -> list[tuple[Any, ...]]:
         ).fetchall()
 
 
-def count(sql: str, params: tuple[Any, ...] = ()) -> int:
+def count(query: str, params: tuple[Any, ...] = ()) -> int:
     with database() as conn:
-        row = conn.execute(sql, params).fetchone()
+        row = conn.execute(query, params).fetchone()
     assert row is not None
     value: int = row[0]
     return value
+
+
+def iso_ms(epoch_ms: int) -> str:
+    """A requestedAt for the given epoch milliseconds, as tally sends it."""
+    moment = datetime(1970, 1, 1, tzinfo=UTC) + timedelta(milliseconds=epoch_ms)
+    return moment.strftime("%Y-%m-%dT%H:%M:%S.") + f"{moment.microsecond // 1000:03d}Z"
+
+
+def now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def decision_row(**overrides: Any) -> dict[str, Any]:
+    """A complete decisions row (design.md section 2), for inserts that test the schema."""
+    now = datetime.now(UTC)
+    row: dict[str, Any] = {
+        "decision_id": uuid.uuid4(),
+        "request_id": unique("schema"),
+        "from_account_id": uuid.uuid4(),
+        "to_account_id": uuid.uuid4(),
+        "amount": 1,
+        "currency": "CAD",
+        "requested_at": now,
+        "decided_at": now,
+        "decision": "allow",
+        "rule_set_version": 1,
+        "rule_set_hash": "0" * 64,
+        "fired": Jsonb([]),
+        "features": Jsonb(dict.fromkeys(FEATURE_NAMES, 0) | {"amount": 1}),
+        "feature_lag_ms": 0,
+    }
+    row.update(overrides)
+    return row
+
+
+def insert_decision(row: dict[str, Any]) -> None:
+    """Inserts the row in a transaction that is always rolled back, so nothing is left behind."""
+    statement = sql.SQL("insert into decisions ({}) values ({})").format(
+        sql.SQL(", ").join(map(sql.Identifier, row)),
+        sql.SQL(", ").join(sql.Placeholder() * len(row)),
+    )
+    with database() as conn, conn.transaction(force_rollback=True):
+        conn.execute(statement, tuple(row.values()))
 
 
 # --- ledger.entries --------------------------------------------------------------------------
@@ -211,3 +280,92 @@ class TopicTail:
 
     def close(self) -> None:
         self.consumer.close()
+
+
+def publish(
+    messages: Sequence[tuple[bytes | None, bytes | None]], *, partition: int = -1
+) -> list[tuple[int, int]]:
+    """Publishes (key, value) pairs to ledger.entries, each with a traceparent as tally's relay
+    sends (D44), and returns each one's (partition, offset) once the broker has it. Partition -1
+    lets the key choose, as tally's producer does."""
+    producer = Producer(
+        {"bootstrap.servers": KAFKA_HOST_BOOTSTRAP, "acks": "all", "partitioner": "murmur2_random"}
+    )
+    positions: dict[int, tuple[int, int]] = {}
+    failures: list[str] = []
+
+    def reporter(index: int) -> Callable[[KafkaError | None, Message], None]:
+        def report(error: KafkaError | None, message: Message) -> None:
+            if error is not None:
+                failures.append(error.str())
+                return
+            where, offset = message.partition(), message.offset()
+            assert where is not None
+            assert offset is not None
+            positions[index] = (where, offset)
+
+        return report
+
+    trace = secrets.token_hex(16)
+    for index, (key, value) in enumerate(messages):
+        producer.produce(
+            TOPIC,
+            value=value,
+            key=key,
+            partition=partition,
+            headers=[("traceparent", f"00-{trace}-{secrets.token_hex(8)}-03".encode())],
+            on_delivery=reporter(index),
+        )
+    assert producer.flush(15) == 0, "the broker didn't take every message within 15 s"
+    assert not failures, failures
+    return [positions[index] for index in range(len(messages))]
+
+
+class ConsumerOffsets:
+    """The feature consumer group's committed offsets. The consumer commits only after the writes
+    for every message before an offset (D40h), so a committed offset past a message means its
+    writes are done. Reading them doesn't join the group."""
+
+    def __init__(self) -> None:
+        self.consumer = Consumer(
+            {
+                "bootstrap.servers": KAFKA_HOST_BOOTSTRAP,
+                "group.id": GROUP_ID,
+                "enable.auto.commit": False,
+            }
+        )
+
+    def committed(self) -> dict[int, int]:
+        """partition -> next offset to read; a partition never committed is left out."""
+        partitions = [TopicPartition(TOPIC, p) for p in range(3)]
+        return {
+            tp.partition: tp.offset
+            for tp in self.consumer.committed(partitions, timeout=10)
+            if tp.offset >= 0
+        }
+
+    def wait_past(self, positions: Iterable[tuple[int, int]], timeout: float = 30) -> None:
+        """Waits until the group has committed past every (partition, offset)."""
+        needed: dict[int, int] = {}
+        for partition, offset in positions:
+            needed[partition] = max(needed.get(partition, 0), offset + 1)
+        deadline = time.monotonic() + timeout
+        while True:
+            committed = self.committed()
+            if all(committed.get(p, -1) >= o for p, o in needed.items()):
+                return
+            assert time.monotonic() < deadline, (
+                f"the consumer didn't commit past {needed} within {timeout} s: {committed}"
+            )
+            time.sleep(0.1)
+
+    def close(self) -> None:
+        self.consumer.close()
+
+
+def wait_until_consumed(positions: Iterable[tuple[int, int]], timeout: float = 30) -> None:
+    offsets = ConsumerOffsets()
+    try:
+        offsets.wait_past(positions, timeout)
+    finally:
+        offsets.close()

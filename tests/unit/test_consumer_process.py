@@ -1,4 +1,5 @@
-"""The consumer process serves /metrics and stops cleanly on SIGTERM (as `make down` sends)."""
+"""The consumer process serves /metrics and stops cleanly on SIGTERM (as `make down` sends), even
+with no Kafka, Redis or Postgres to talk to."""
 
 from __future__ import annotations
 
@@ -23,7 +24,14 @@ def free_port() -> int:
 
 def test_serves_metrics_then_stops_on_sigterm() -> None:
     port = free_port()
-    env = {**os.environ, "CONSUMER_METRICS_PORT": str(port)}
+    env = {
+        **os.environ,
+        "CONSUMER_METRICS_PORT": str(port),
+        # Port 1 on the loopback refuses connections at once.
+        "DATABASE_URL": "postgresql://nobody:dummy@127.0.0.1:1/nothing",
+        "REDIS_URL": "redis://127.0.0.1:1/0",
+        "KAFKA_BOOTSTRAP": "127.0.0.1:1",
+    }
     process = subprocess.Popen(
         [sys.executable, "-m", "risk.features.consumer"],
         cwd=ROOT,

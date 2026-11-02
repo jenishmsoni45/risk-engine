@@ -1,13 +1,17 @@
 """GET /health answers 503 naming each dependency that doesn't answer; /metrics always answers.
 
-The healthy path runs against the real stack in tests/integration/test_stack.py.
+The healthy path runs against the real stack in tests/integration/test_stack.py. Each app runs
+in-process with its own startup and shutdown, and httpx calls it directly (D45: no Starlette
+TestClient, which is deprecated).
 """
 
 from __future__ import annotations
 
+import asyncio
+
+import httpx
 import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
 from ledger_stub.app import app as stub_app
 from risk.api import app as api_app
@@ -26,22 +30,28 @@ def unreachable_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(key, value)
 
 
+async def get(app: FastAPI, path: str) -> httpx.Response:
+    """GET path from the app, between its startup and its shutdown, as uvicorn would run it."""
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://app") as client:
+            return await client.get(path)
+
+
 @pytest.mark.parametrize(
     ("app", "failed"),
     [(api_app, ["postgres", "redis"]), (stub_app, ["kafka", "postgres"])],
     ids=["api", "stub"],
 )
 def test_health_names_what_failed(app: FastAPI, failed: list[str]) -> None:
-    with TestClient(app) as client:
-        response = client.get("/health")
+    response = asyncio.run(get(app, "/health"))
     assert response.status_code == 503
     assert response.json() == {"status": "unavailable", "failed": failed}
 
 
 @pytest.mark.parametrize("app", [api_app, stub_app], ids=["api", "stub"])
 def test_metrics_answer_without_dependencies(app: FastAPI) -> None:
-    with TestClient(app) as client:
-        response = client.get("/metrics")
+    response = asyncio.run(get(app, "/metrics"))
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
     assert "# TYPE" in response.text

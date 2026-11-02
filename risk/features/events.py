@@ -2,7 +2,7 @@
 
 Parsing works on JSON, never on bytes, and ignores unknown fields. A missing decisionId reads as
 null and a missing riskCheck as none (events from before tally's V7). Anything else that breaks the
-format raises BadEventError, which the consumer stores in bad_events (Phase 3).
+format raises BadEventError, which the consumer stores in bad_events (D40i).
 """
 
 from __future__ import annotations

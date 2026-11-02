@@ -30,11 +30,12 @@ from risk.checks import (
 )
 from risk.decisions import (
     Conflict,
-    CorruptWatermarkError,
     DecisionEngine,
+    DecisionRequest,
     InvalidRequestError,
     parse_request,
 )
+from risk.features.redis_store import CorruptFeatureDataError, FeatureStore
 from risk.problems import bad_request, problem
 from risk.rules import ruleset
 
@@ -53,13 +54,17 @@ REQUESTS = Counter(
     ["outcome"],
 )
 DECISIONS = Counter("risk_decisions", "New decisions stored, by decision", ["decision"])
+ATTEMPT_WRITE_FAILURES = Counter(
+    "risk_attempt_write_failures",
+    "Attempts not recorded after their decision committed; the decision was still returned",
+)
 
 # Failures of Redis or Postgres, which answer 503 (D22). TimeoutError is an OSError.
 DEPENDENCY_ERRORS: tuple[type[BaseException], ...] = (
     psycopg.Error,
     aioredis.RedisError,
     OSError,
-    CorruptWatermarkError,
+    CorruptFeatureDataError,
 )
 
 
@@ -112,6 +117,17 @@ def unavailable(reason: str) -> JSONResponse:
     )
 
 
+async def record_attempt(engine: DecisionEngine, request: DecisionRequest) -> None:
+    """design.md 3.3: past the commit the deadline no longer applies, and a failed write still
+    returns the decision; it is counted, and the rebuild (design.md 3.5) restores the attempt.
+    The Redis client's own timeout bounds the write."""
+    try:
+        await engine.record_attempt(request)
+    except DEPENDENCY_ERRORS as exc:
+        ATTEMPT_WRITE_FAILURES.inc()
+        log.warning("attempt for %r not recorded: %r", request.request_id, exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # An invalid rule file stops the service here, before it serves anything (D27).
@@ -148,7 +164,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.health_redis = health_redis
     app.state.rules = rules
     app.state.deadline_s = deadline_s
-    app.state.engine = DecisionEngine(rules, pool, redis)
+    app.state.engine = DecisionEngine(
+        rules, pool, FeatureStore(redis, settings.lateness_margin_ms())
+    )
     try:
         yield
     finally:
@@ -186,6 +204,7 @@ async def decide(request: Request) -> Response:
     else:
         REQUESTS.labels("decided").inc()
         DECISIONS.labels(outcome.decision).inc()
+        await record_attempt(state.engine, parsed)
     # onTimeout is always the current rule set's, a replay's included (D13).
     return JSONResponse(
         {

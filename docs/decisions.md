@@ -372,6 +372,22 @@ Three questions the docs didn't settle, asked before any Phase 2 code.
 - Why: the stub's events then match tally's in every part, so CI exercises the consumer with headers present, as real traffic has them.
 - Consequences: the contract test checks that tally's fixtures and the stub's events each carry exactly this one header, in the W3C format.
 
+### D45. Gaps found at the start of Phase 3 (2026-11-02)
+
+Three questions, asked before any Phase 3 code: one the docs didn't settle, and two follow-ups left by the Phase 2 PR.
+
+1. **Whether the watermark expires.** D40r gives Redis keys a wall-clock expiry of 25 h after each write, as memory hygiene, without saying whether that includes `wm`. A missing `wm` reads as 0 (D43), so an expired one would make every lag read "no event applied yet" after a quiet day.
+   - Options: `wm` never expires; `wm` expires like every other key.
+   - Answer: **`wm` never expires** (owner). Only the per-account sets (`f:*` and `a:*`) get the 25 h expiry. design.md section 2 now says so; the rest of D40r stands.
+   - Why: it is one small key, so it needs no hygiene, and the lag stays true after a quiet day.
+2. **Two rule files both called version 1.** Phase 2's empty rule set is version 1, and Phase 4's starter set is version 1 too (phases.md, Phase 4 criterion 6).
+   - Options: keep both as version 1; ship the starter set as version 2.
+   - Answer: **keep both as version 1** (owner). No doc changes.
+   - Why: the empty set was a build stage that never made a real decision, the stored file hash tells the two apart, and the local database has been wiped since.
+3. **Which Phase 2 follow-ups to fix now.**
+   - Options: the Starlette deprecation warning from Phase 1's health test; the stub's cap of 100 decision calls in flight; a bound on the stub's wait for a paused Postgres; turning off uvicorn's access log.
+   - Answer: **only the test warning** (owner): the health test drops Starlette's TestClient for httpx alone, with the same checks and no new package. The other three stay with Phase 5, whose bench and fault tests measure what they need.
+
 ## Open questions
 
 - **O24. How 2b runs LightGBM on this Mac.** LightGBM's macOS wheel needs OpenMP from Homebrew (`libomp`), and CLAUDE.md allows no installs on the Mac. Options include running training, the backtest and shadow scoring only inside Docker, where the image provides OpenMP, or the owner installing libomp. To be decided before Phase 6 starts; nothing earlier depends on it.

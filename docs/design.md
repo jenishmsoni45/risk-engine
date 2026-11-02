@@ -154,7 +154,7 @@ These constraints are I5's schema half. An index on `(from_account_id, requested
 
 **`stub.transfers`**: `idempotency_key` (primary key), `request_hash`, `response_status`, `response_body` (jsonb), `entry_id`, `decision_id`, `risk_check`, `created_at`. **`stub.outbox`**: `id` (bigserial), `entry_id`, `payload` (jsonb), `created_at`, `published_at`, with a partial index on unpublished rows.
 
-**Redis**: architecture.md section 4. Sorted-set members are `{amount}:{id}`; scores are epoch milliseconds. Keys get a wall-clock expiry of 25 h after each write as memory hygiene only (D40r); correctness never depends on it, because every read filters by score.
+**Redis**: architecture.md section 4. Sorted-set members are `{amount}:{id}`; scores are epoch milliseconds. The sorted sets get a wall-clock expiry of 25 h after each write as memory hygiene only (D40r); correctness never depends on it, because every read filters by score. `wm` never expires (D45).
 
 ## 3. Features in detail
 
