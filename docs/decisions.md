@@ -388,6 +388,19 @@ Three questions, asked before any Phase 3 code: one the docs didn't settle, and 
    - Options: the Starlette deprecation warning from Phase 1's health test; the stub's cap of 100 decision calls in flight; a bound on the stub's wait for a paused Postgres; turning off uvicorn's access log.
    - Answer: **only the test warning** (owner): the health test drops Starlette's TestClient for httpx alone, with the same checks and no new package. The other three stay with Phase 5, whose bench and fault tests measure what they need.
 
+### D46. Gaps found at the start of Phase 4 (2026-11-02)
+
+Two questions the docs didn't settle, asked before any Phase 4 code.
+
+1. **A key given twice in one mapping.** YAML requires the keys of a mapping to be unique, but PyYAML's loader keeps the last value of a repeated key without a word, so `value: 5` followed by `value: 50` in one condition would load as 50.
+   - Options: refuse the file; keep the last value, as the library does.
+   - Answer: **refuse the file** (owner). A repeated key at any level stops the service at startup with a message naming the key and its line, like any other invalid file (design.md 1.4, D27). No doc changes: design.md 1.4 already says that anything else stops the service.
+   - Why: a copy-paste slip must not silently change a threshold.
+2. **A changed file that keeps its version.** If the rules change and `version` doesn't, two rule sets answer as the same `ruleSet`, told apart only by the stored hash.
+   - Options: leave it, as a follow-up; refuse to start when the decision log already holds the version with a different hash.
+   - Answer: **a follow-up** (owner). Phase 4 adds no check; the PR lists it under Follow-ups.
+   - Why: D45.2 already accepted two files with version 1, and a check would need Postgres at startup.
+
 ## Open questions
 
 - **O24. How 2b runs LightGBM on this Mac.** LightGBM's macOS wheel needs OpenMP from Homebrew (`libomp`), and CLAUDE.md allows no installs on the Mac. Options include running training, the backtest and shadow scoring only inside Docker, where the image provides OpenMP, or the owner installing libomp. To be decided before Phase 6 starts; nothing earlier depends on it.
