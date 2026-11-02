@@ -13,6 +13,8 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         "RULES_PATH",
         "DECISION_DEADLINE_MS",
         "KEEP_ALIVE_SECONDS",
+        "LATENESS_MARGIN_SECONDS",
+        "CONSUMER_METRICS_PORT",
         "STUB_RISK_URL",
         "STUB_RISK_TIMEOUT_MS",
         "STUB_ON_TIMEOUT_DEFAULT",
@@ -24,6 +26,8 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert str(settings.rules_path()) == "risk/rules/ruleset.yaml"
     assert settings.decision_deadline_ms() == 60
     assert settings.keep_alive_seconds() == 10
+    assert settings.lateness_margin_ms() == 300_000
+    assert settings.consumer_metrics_port() == 8002
     assert StubConfig.from_env() == StubConfig(
         database_url="postgresql://dummy@db/dummy",
         kafka_bootstrap=settings.kafka_bootstrap(),
@@ -33,6 +37,11 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         relay_poll_s=0.2,
         relay_batch=100,
     )
+
+
+def test_a_lateness_margin_of_zero_is_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LATENESS_MARGIN_SECONDS", "0")
+    assert settings.lateness_margin_ms() == 0
 
 
 def test_a_relay_interval_of_zero_is_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -46,6 +55,9 @@ def test_a_relay_interval_of_zero_is_allowed(monkeypatch: pytest.MonkeyPatch) ->
         ("DECISION_DEADLINE_MS", "sixty"),
         ("DECISION_DEADLINE_MS", "0"),
         ("KEEP_ALIVE_SECONDS", "-1"),
+        ("LATENESS_MARGIN_SECONDS", "-1"),
+        ("LATENESS_MARGIN_SECONDS", "5m"),
+        ("CONSUMER_METRICS_PORT", "0"),
         ("STUB_RISK_TIMEOUT_MS", "1.5"),
         ("STUB_RELAY_POLL_MS", "-1"),
         ("STUB_RELAY_BATCH", "0"),
@@ -61,6 +73,8 @@ def test_a_bad_value_names_the_variable(
     def read_every_setting() -> None:
         settings.decision_deadline_ms()
         settings.keep_alive_seconds()
+        settings.lateness_margin_ms()
+        settings.consumer_metrics_port()
         StubConfig.from_env()
 
     with pytest.raises(RuntimeError, match=name):

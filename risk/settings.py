@@ -53,6 +53,17 @@ def keep_alive_seconds() -> int:
     return _int("KEEP_ALIVE_SECONDS", 10, 1)
 
 
+def lateness_margin_ms() -> int:
+    """LATENESS_MARGIN_SECONDS (D40c): how much older than watermark - 24 h an event may be and
+    still count; also how far behind requestedAt - 24 h attempts are kept."""
+    return _int("LATENESS_MARGIN_SECONDS", 300, 0) * 1000
+
+
+def consumer_metrics_port() -> int:
+    """The consumer's GET /metrics port (D40z)."""
+    return _int("CONSUMER_METRICS_PORT", 8002, 1)
+
+
 def stub_risk_url() -> str:
     return os.environ.get("STUB_RISK_URL") or "http://api:8000"
 
