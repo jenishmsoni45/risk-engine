@@ -1,0 +1,15 @@
+{
+  "decisions": 3087,
+  "ended_at": "2026-11-03T04:08:37.067577Z",
+  "members_read": {
+    "max": 10007,
+    "min": 10001,
+    "p50": 10002
+  },
+  "preloaded": 10000,
+  "rate": 50,
+  "scenario": "hot",
+  "started_at": "2026-11-03T04:05:36.924785Z",
+  "stopped": "p99 passed 50 ms",
+  "summary": "hot-0010000.json"
+}

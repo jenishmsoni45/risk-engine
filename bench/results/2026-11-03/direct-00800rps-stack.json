@@ -1,0 +1,18 @@
+{
+  "consumer_offset_lag_at_end": 0,
+  "decisions": 143738,
+  "ended_at": "2026-11-03T03:08:55.164915Z",
+  "feature_lag_ms": {
+    "count": 0,
+    "max": null,
+    "p50": null,
+    "p99": null
+  },
+  "rate": 800,
+  "scenario": "direct",
+  "started_at": "2026-11-03T03:05:55.070978Z",
+  "stopped": null,
+  "stub_backup_answers": 0,
+  "stub_transfers": 0,
+  "summary": "direct-00800rps.json"
+}
