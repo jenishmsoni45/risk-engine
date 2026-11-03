@@ -9,8 +9,10 @@ ENV_FILE := $(if $(wildcard .env),.env,.env.example)
 COMPOSE := docker compose --env-file $(ENV_FILE)
 APP_IMAGE := risk-engine:local
 PY_DIRS := $(wildcard risk ledger_stub tests ml bench)
+# The throwaway stacks of make bench and make e2e (D48.6, D49), removed when they end.
+THROWAWAY_PROJECTS := risk-engine-bench risk-engine-e2e
 
-.PHONY: help sync up down test lint audit clean purge
+.PHONY: help sync up down test lint audit clean purge rebuild-features bench report check-readme e2e
 
 help:
 	@echo "make up      start the stack and wait until every service is healthy"
@@ -18,6 +20,11 @@ help:
 	@echo "make test    start the stack, then run every test"
 	@echo "make lint    lock check, ruff check, ruff format check, mypy"
 	@echo "make audit   pip-audit on the locked dependencies"
+	@echo "make rebuild-features   refill Redis from ledger.entries and the decision log"
+	@echo "make bench   the k6 scenarios on a throwaway stack, into bench/results/<UTC date>/"
+	@echo "make report  rewrite README.md's bench tables from the newest results"
+	@echo "make check-readme   fail if README.md's bench tables differ from make report's"
+	@echo "make e2e     real tally (TALLY_DIR, default ~/Desktop/tally) against a throwaway stack"
 	@echo "make clean   remove this project's containers, volumes, network, image, .venv and caches"
 	@echo "make purge   make clean, then the pinned images no container uses and uv's cache"
 
@@ -39,6 +46,25 @@ lint: sync
 	uv run --locked ruff format --check .
 	uv run --locked mypy
 
+# Redis holds nothing that can't be rebuilt (design.md 3.5): runs in a one-off container from the
+# consumer's service, so it reaches the same Redis, Postgres and Kafka as the consumer does.
+rebuild-features:
+	$(COMPOSE) run --rm --no-deps --no-TTY consumer python -m risk.features.rebuild
+
+# The measurement plan (design.md section 12). Needs the normal stack stopped (`make down`).
+bench: sync
+	uv run --locked python -m bench.run
+
+report: sync
+	uv run --locked python -m bench.report --write README.md
+
+check-readme: sync
+	uv run --locked python -m bench.report --check README.md
+
+# Real tally against this service (D26, D48.6). Local only; needs the normal stack stopped.
+e2e: sync
+	uv run --locked python -m scripts.e2e
+
 audit: sync
 	@tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT; \
 	uv export --locked --all-groups --no-emit-project --format requirements.txt \
@@ -49,6 +75,9 @@ audit: sync
 # Never touches data/, .env or any tracked file (D41).
 clean:
 	$(COMPOSE) down --volumes --remove-orphans
+	@for project in $(THROWAWAY_PROJECTS); do \
+		$(COMPOSE) --project-name "$$project" down --volumes --remove-orphans; \
+	done
 	@if docker image inspect $(APP_IMAGE) > /dev/null 2>&1; then docker image rm $(APP_IMAGE); fi
 	rm -rf .venv .pytest_cache .mypy_cache .ruff_cache .hypothesis
 	find $(PY_DIRS) -type d -name __pycache__ -prune -exec rm -rf {} +
