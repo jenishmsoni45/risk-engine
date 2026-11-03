@@ -53,11 +53,16 @@ select = [
 # wrapper through subprocess with fixed argument lists.
 "scripts/**" = ["T201", "S603", "S607"]
 "bench/**" = ["T201", "S603", "S607"]
+# 2b's command-line tools report on standard output, and make parity drives docker through
+# subprocess with fixed argument lists.
+"ml/**" = ["T201", "S603", "S607"]
+# Generated PaySim-format data (D37) is seeded for repeatability, never for security.
+"ml/generate.py" = ["S311"]
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["risk", "ledger_stub", "tests", "scripts", "bench"]
+files = ["risk", "ledger_stub", "tests", "scripts", "bench", "ml"]
 # tests/ has no __init__.py; module names start at the repo root (tests.helpers).
 explicit_package_bases = true
 

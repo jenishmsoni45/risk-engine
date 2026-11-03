@@ -95,6 +95,12 @@ def read_range(t_ms: int) -> tuple[int, int]:
     return t_ms - LONGEST_WINDOW_MS, t_ms
 
 
+def hour_of_day(t_ms: int) -> int:
+    """D35's input beside the 31 features: the UTC hour of the decision time, 0 to 23. Here, so
+    that the offline pipeline and (Phase 8) the shadow scorer read it from one place."""
+    return t_ms // HOUR_MS % 24
+
+
 def features_at(t_ms: int, amount: int, members: DecisionMembers) -> dict[str, int]:
     """The 31 features of design.md 1.5 for a decision at t, in FEATURE_NAMES order."""
     by_family: dict[str, Sequence[Member]] = {
