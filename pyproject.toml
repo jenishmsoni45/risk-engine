@@ -49,13 +49,15 @@ select = [
 [tool.ruff.lint.per-file-ignores]
 # Tests assert, and drive docker and git through subprocess with fixed argument lists.
 "tests/**" = ["S101", "S603", "S607"]
-# Command-line scripts report on standard output.
-"scripts/**" = ["T201"]
+# Command-line scripts report on standard output, and drive docker, git, k6 and tally's Gradle
+# wrapper through subprocess with fixed argument lists.
+"scripts/**" = ["T201", "S603", "S607"]
+"bench/**" = ["T201", "S603", "S607"]
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["risk", "ledger_stub", "tests", "scripts"]
+files = ["risk", "ledger_stub", "tests", "scripts", "bench"]
 # tests/ has no __init__.py; module names start at the repo root (tests.helpers).
 explicit_package_bases = true
 
