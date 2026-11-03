@@ -54,11 +54,16 @@ class OracleAttempt:
 class ReplayedTransfer(Protocol):
     """What the oracle reads of a replayed PaySim transfer (ml/paysim.py's Transfer)."""
 
-    request_id: str
-    sender: uuid.UUID
-    receiver: uuid.UUID
-    amount: int
-    time_ms: int
+    @property
+    def request_id(self) -> str: ...
+    @property
+    def sender(self) -> uuid.UUID: ...
+    @property
+    def receiver(self) -> uuid.UUID: ...
+    @property
+    def amount(self) -> int: ...
+    @property
+    def time_ms(self) -> int: ...
 
 
 def replayed(

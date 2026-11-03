@@ -8,6 +8,7 @@ from __future__ import annotations
 import ast
 import inspect
 from pathlib import Path
+from types import ModuleType
 
 import ml.offline
 import risk.decisions
@@ -24,18 +25,23 @@ FEATURE_LOGIC = {
 }
 
 
+def bound(module: ModuleType, name: str) -> object:
+    """What the module's own namespace binds to the name: the function its code calls."""
+    return vars(module)[name]
+
+
 def test_the_offline_pipeline_and_the_api_compute_features_with_one_function() -> None:
-    assert ml.offline.features_at is compute.features_at
-    assert risk.decisions.features_at is compute.features_at
+    assert bound(ml.offline, "features_at") is compute.features_at
+    assert bound(risk.decisions, "features_at") is compute.features_at
 
 
 def test_the_offline_pipeline_and_the_consumer_net_entries_with_one_function() -> None:
-    assert ml.offline.net_entry is compute.net_entry
-    assert risk.features.consumer.net_entry is compute.net_entry
+    assert bound(ml.offline, "net_entry") is compute.net_entry
+    assert bound(risk.features.consumer, "net_entry") is compute.net_entry
 
 
 def test_the_hour_of_day_comes_from_the_shared_module() -> None:
-    assert ml.offline.hour_of_day is compute.hour_of_day
+    assert bound(ml.offline, "hour_of_day") is compute.hour_of_day
 
 
 def test_nothing_under_ml_defines_its_own_feature_logic() -> None:
