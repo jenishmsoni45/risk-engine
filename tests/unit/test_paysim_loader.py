@@ -5,6 +5,7 @@ amounts skipped and counted, and times spread evenly in file order within each h
 
 from __future__ import annotations
 
+import itertools
 import uuid
 from collections.abc import Sequence
 from decimal import Decimal
@@ -153,7 +154,7 @@ def test_an_hours_times_are_whole_milliseconds_rounded_down_and_strictly_increas
     assert times == [start + i * HOUR_MS // 7 for i in range(7)]
     assert times[1] - times[0] == 514_285  # 3,600,000 / 7, rounded down
     busy = hour_times(5, HOUR_MS)  # one transfer per millisecond still increases
-    assert all(b - a == 1 for a, b in zip(busy, busy[1:], strict=False))
+    assert all(b - a == 1 for a, b in itertools.pairwise(busy))
 
 
 def test_an_hour_with_more_transfers_than_milliseconds_is_refused() -> None:
@@ -212,7 +213,7 @@ def test_generated_rows_hold_every_type_and_paysims_fraud_pattern(tmp_path: Path
     # A fraud TRANSFER to a mule followed by the mule's fraud CASH_OUT of the same amount.
     pairs = [
         (a, b)
-        for a, b in zip(rows, rows[1:], strict=False)
+        for a, b in itertools.pairwise(rows)
         if a[1] == "TRANSFER" and b[1] == "CASH_OUT" and a[9] == b[9] == "1"
     ]
     assert pairs

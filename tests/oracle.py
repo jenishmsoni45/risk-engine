@@ -11,6 +11,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Protocol
 
 # design.md 1.5, spelled out rather than generated, so a wrong name in the module shows up here.
 NAMES = (
@@ -48,6 +49,29 @@ class OracleAttempt:
     sender: uuid.UUID
     time_ms: int  # requestedAt, truncated to the millisecond
     amount: int
+
+
+class ReplayedTransfer(Protocol):
+    """What the oracle reads of a replayed PaySim transfer (ml/paysim.py's Transfer)."""
+
+    request_id: str
+    sender: uuid.UUID
+    receiver: uuid.UUID
+    amount: int
+    time_ms: int
+
+
+def replayed(
+    transfers: Iterable[ReplayedTransfer],
+) -> tuple[list[OracleEntry], list[OracleAttempt]]:
+    """A replay's raw log (D40u): every transfer is a ledger entry at its time and an attempt by
+    its sender at the same time."""
+    entries, attempts = [], []
+    for t in transfers:
+        lines = (OracleLine(t.sender, -t.amount), OracleLine(t.receiver, t.amount))
+        entries.append(OracleEntry(uuid.UUID(t.request_id), "transfer", t.time_ms, lines))
+        attempts.append(OracleAttempt(t.request_id, t.sender, t.time_ms, t.amount))
+    return entries, attempts
 
 
 def net(entry: OracleEntry, account: uuid.UUID) -> int:

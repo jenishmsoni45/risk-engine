@@ -16,7 +16,6 @@ from ml.offline import features, ledger_event
 from ml.paysim import STEP_1_MS, Transfer, load
 from risk.features.events import parse_event
 from tests import oracle
-from tests.oracle import OracleAttempt, OracleEntry, OracleLine
 
 A, B, C = (uuid.UUID(f"0ff1ce00-0000-4000-8000-00000000000{n}") for n in (1, 2, 3))
 
@@ -38,16 +37,7 @@ def transfer(sender: uuid.UUID, receiver: uuid.UUID, amount: int, time_ms: int) 
 def expected(log: list[Transfer], index: int) -> dict[str, int]:
     """The oracle's features for log[index], from every transfer of the log before its time."""
     target = log[index]
-    entries = [
-        OracleEntry(
-            id=uuid.UUID(t.request_id),
-            kind="transfer",
-            time_ms=t.time_ms,
-            lines=(OracleLine(t.sender, -t.amount), OracleLine(t.receiver, t.amount)),
-        )
-        for t in log
-    ]
-    attempts = [OracleAttempt(t.request_id, t.sender, t.time_ms, t.amount) for t in log]
+    entries, attempts = oracle.replayed(log)
     return oracle.features(
         entries, attempts, target.sender, target.receiver, target.amount, target.time_ms
     )
