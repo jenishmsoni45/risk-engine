@@ -462,8 +462,42 @@ design.md section 12, D40o and D48.2 fix the bench's steps, first rate, budget, 
 - Why: the decision reads the receiver's incoming set the same way it reads the sender's outgoing set, but the attempts land on the random senders. The window then stays at its preloaded size through each step, at the planned rate.
 - Consequences: only the hot scenario is run again. README.md's conditions list each scenario's commit, so they show that the hot results come from a later commit than the direct and stub results.
 
+### D51. Gaps found at the start of Phase 6 (2026-11-03)
+
+Four questions, asked before any Phase 6 code: one found by timing the consumer, one by CI on `main`, the instant Phase 6 must choose, and O24.
+
+1. **The consumer waits to fill a batch.** The consumer asked Kafka for up to 500 messages with a 0.5 s timeout, and librdkafka waits out the timeout unless the batch fills. Timed on this Mac at the start of the phase, an event published on its own was applied only once that timeout had run. In light traffic every event therefore waited up to 0.5 s before it counted. The replay waits for each event before the next request (D36), so a 10k sample would wait up to 0.5 s per transfer. A live decision also missed any transfer committed within the last half second.
+   - Options: block for the first message, then take only what has already been fetched; a setting that only the parity stack lowers; keep it.
+   - Answer: **block for the first message, then drain** (owner). Each poll waits up to 0.5 s for one message, then takes up to 499 more that have already been fetched, without waiting. A busy stream still arrives in batches of up to 500. No doc changes: design.md doesn't say how the consumer polls.
+   - Consequences: README's consumer-lag numbers were measured before this change. Their conditions name the commit, and Phase 8's bench measures the new loop.
+2. **The UTC instant of PaySim's step 1** (phases.md, Phase 6).
+   - Options: 2026-01-01T00:00:00Z with step s covering `[base + (s − 1) h, base + s h)`; the same date with the hour of day equal to `s mod 24`; choose after the profile.
+   - Answer: **step 1 starts at 2026-01-01T00:00:00Z** (owner). The hour of day (D35) is `(s − 1) mod 24`, and day d (D38) holds steps `24d + 1` to `24d + 24`, from UTC midnight. The profile prints rows per hour of day under this mapping, so the owner can check where the nightly lull falls when confirming the sample.
+   - Why: it is in the past, so a replay never pushes the watermark ahead of the wall clock, and the stack's later events are never late behind it.
+3. **A timing-dependent test on `main`.** After the Phase 5 merge, CI on `main` failed in `tests/adversarial/test_floods.py`: in the burst of 200 concurrent requests with one `requestId`, every request got 503 within the 60 ms deadline on the slower runner, so the test found no decision to compare. The same test passed on the PR's run.
+   - Options: fix it in this phase's PR; a separate PR first; a follow-up.
+   - Answer: **fix it in this PR** (owner). After the burst, one more request with the same body must answer 200. Every 200, the burst's and that one's, must be the same decision, with exactly one row and one attempt. The test still checks I1 under contention, without needing a burst request to finish within 60 ms on a busy runner.
+4. **O24: how 2b runs LightGBM on this Mac.**
+   - Options: only inside Docker; the owner installs libomp; decide in Phase 7.
+   - Answer: **only inside Docker** (owner). Anything that imports LightGBM (training, the backtest, shadow scoring) runs in this repo's image, and nothing on the Mac imports it. Whether the image needs Debian's OpenMP runtime (`libgomp1`) is checked in Phase 7. The local safety guard blocks running this repo's image by hand, so it couldn't be checked here. This closes O24.
+
+### D52. Replay and loader choices (2026-11-03)
+
+Choices made at the start of Phase 6, within D32, D33, D36, D37, D40p, D40u and D40v, and shown to the owner with D51's questions. No doc changes.
+
+| # | Choice | Value | Why |
+|---|---|---|---|
+| a | Where `make parity` runs | its own Compose project, `risk-engine-parity`, started empty and removed with its volumes at the end; the normal stack must be stopped first, since both use the same ports. Its stub runs with `STUB_REPLAY=1` and a relay interval of 0 | the replay's wait needs a watermark behind the first replayed time, as on a fresh stack; the relay delay changes no feature value, and Phase 6 criterion 4's test covers a delay above 0 |
+| b | Where CI's I7 test runs | on the normal stack: it waits until the consumer has caught up with the topic, empties the stack's Redis as `tests/adversarial/test_rebuild.py` does, and replays through a replay-mode stub run in the test process against the stack's API and consumer. Each run maps PaySim names in a new UUID namespace | the watermark must be behind the replayed times; a new namespace keeps each run's keys and accounts apart from earlier runs' rows in Postgres |
+| c | The parity sample | the first 10,000 loaded transfers in time order | D36's contiguous sample of about 10k |
+| d | Each transfer's Idempotency-Key | the UUID v5, in the loader's namespace, of the row's step and its line in the CSV | deterministic, and inside tally's key pattern (D1) |
+| e | What the loader refuses | a file whose steps go backwards; an hour with more transfers than milliseconds; a transfer whose sender is its receiver | times must strictly increase for the wait to be exact (D36): with two transfers in one millisecond, the watermark could pass the second's time before its event was applied. The ledger refuses a transfer to the same account; the profile counts such rows first |
+| f | A zero amount | a row whose amount rounds to 0 cents | the ledger refuses an amount below 1 cent, so 0.004 can't be posted either (D40p) |
+| g | The replay time header | in replay mode, `X-Replay-Time` is required, an ISO-8601 time with an offset, truncated to the millisecond; without a valid one the stub answers 400. Normal mode ignores the header | a replayed transfer never falls back to the wall clock |
+| h | When the replay stops | on any answer but 201; on a 201 whose `createdAt` isn't the replay time, which means the stub isn't in replay mode; when the watermark hasn't reached the previous transfer's time within 30 s. It refuses to start when the watermark is already at or past the first transfer's time | every replayed transfer is decided and applied before the next (D36), or the run says why not |
+| i | Dependencies | none added: the loader, the profile and the offline pipeline use Python's own csv, decimal and uuid modules | Phase 6 trains nothing; pandas (D40s) waits until a phase needs it |
+| j | The profile's report | `ml/reports/paysim_profile.md`, written by the profile script, naming the CSV's SHA-256 | a committed report, traceable to one file and one script (D29) |
+
 ## Open questions
 
-- **O24. How 2b runs LightGBM on this Mac.** LightGBM's macOS wheel needs OpenMP from Homebrew (`libomp`), and CLAUDE.md allows no installs on the Mac. Options include running training, the backtest and shadow scoring only inside Docker, where the image provides OpenMP, or the owner installing libomp. To be decided before Phase 6 starts; nothing earlier depends on it.
-
-Every other question from PLAN.md section 5 and every question found since is answered above. One answer is a deferral the owner chose: D30 (the AI-model rule) is confirmed at the start of Phase 7.
+None. Every question from PLAN.md section 5 and every question found since is answered above. One answer is a deferral the owner chose: D30 (the AI-model rule) is confirmed at the start of Phase 7.
