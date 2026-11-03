@@ -9,10 +9,14 @@ ENV_FILE := $(if $(wildcard .env),.env,.env.example)
 COMPOSE := docker compose --env-file $(ENV_FILE)
 APP_IMAGE := risk-engine:local
 PY_DIRS := $(wildcard risk ledger_stub tests ml bench)
-# The throwaway stacks of make bench and make e2e (D48.6, D49), removed when they end.
-THROWAWAY_PROJECTS := risk-engine-bench risk-engine-e2e
+# The throwaway stacks of make bench, make e2e and make parity (D48.6, D49, D52a), removed when
+# they end.
+THROWAWAY_PROJECTS := risk-engine-bench risk-engine-e2e risk-engine-parity
+# The owner's PaySim copy, downloaded by hand into the git-ignored data/ (CLAUDE.md).
+PAYSIM_CSV ?= data/PS_20174392719_1491204439457_log.csv
 
-.PHONY: help sync up down test lint audit clean purge rebuild-features bench report check-readme e2e
+.PHONY: help sync up down test lint audit clean purge rebuild-features bench report check-readme e2e \
+	profile parity
 
 help:
 	@echo "make up      start the stack and wait until every service is healthy"
@@ -25,6 +29,8 @@ help:
 	@echo "make report  rewrite README.md's bench tables from the newest results"
 	@echo "make check-readme   fail if README.md's bench tables differ from make report's"
 	@echo "make e2e     real tally (TALLY_DIR, default ~/Desktop/tally) against a throwaway stack"
+	@echo "make profile   profile PAYSIM_CSV into ml/reports/paysim_profile.md"
+	@echo "make parity  replay PAYSIM_CSV's first 10,000 transfers on a throwaway stack; check I7"
 	@echo "make clean   remove this project's containers, volumes, network, image, .venv and caches"
 	@echo "make purge   make clean, then the pinned images no container uses and uv's cache"
 
@@ -64,6 +70,14 @@ check-readme: sync
 # Real tally against this service (D26, D48.6). Local only; needs the normal stack stopped.
 e2e: sync
 	uv run --locked python -m scripts.e2e
+
+# 2b (design.md section 8). The profile confirms the sample before Phase 7 (D32).
+profile: sync
+	uv run --locked python -m ml.profile --csv "$(PAYSIM_CSV)"
+
+# I7 on real data (D36, D37): local only; needs the normal stack stopped (`make down`).
+parity: sync
+	uv run --locked python -m ml.parity --csv "$(PAYSIM_CSV)"
 
 audit: sync
 	@tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT; \

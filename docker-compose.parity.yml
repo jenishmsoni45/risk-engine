@@ -1,0 +1,8 @@
+# make parity only (D52a), on top of docker-compose.yml, as the throwaway project
+# risk-engine-parity: the stub runs in replay mode (design.md 1.3) and publishes each posting at
+# once, since the relay's delay changes no feature value and the replay waits for every event.
+services:
+  stub:
+    environment:
+      STUB_REPLAY: "1"
+      STUB_RELAY_POLL_MS: "0"
