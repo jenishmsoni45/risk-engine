@@ -8,9 +8,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Coroutine
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
 
 import psycopg
 import redis.asyncio as aioredis
@@ -28,6 +27,7 @@ from risk.checks import (
     health_response,
     metrics_response,
 )
+from risk.deadlines import DeadlineExceededError, within
 from risk.decisions import (
     Conflict,
     DecisionEngine,
@@ -66,46 +66,6 @@ DEPENDENCY_ERRORS: tuple[type[BaseException], ...] = (
     OSError,
     CorruptFeatureDataError,
 )
-
-
-class DeadlineExceededError(Exception):
-    pass
-
-
-# Work abandoned at the deadline keeps running until its cancellation completes; held here so it
-# isn't garbage-collected first.
-_abandoned: set[asyncio.Task[Any]] = set()
-
-
-def _abandon(task: asyncio.Task[Any]) -> None:
-    _abandoned.add(task)
-    task.add_done_callback(_forget)
-
-
-def _forget(task: asyncio.Task[Any]) -> None:
-    _abandoned.discard(task)
-    if not task.cancelled() and task.exception() is not None:
-        log.debug("abandoned decision work ended with %r", task.exception())
-
-
-async def within[T](work: Coroutine[Any, Any, T], seconds: float) -> T:
-    """The result of work if it finishes within seconds; DeadlineExceededError otherwise.
-
-    The answer never waits for the cancelled work to unwind: psycopg, cancelled mid-query, asks
-    the server to cancel and waits up to 5 s for that, which a paused Postgres never answers.
-    """
-    task = asyncio.ensure_future(work)
-    try:
-        done, _ = await asyncio.wait({task}, timeout=max(seconds, 0))
-    except asyncio.CancelledError:
-        # The client went away. The decision finishes on its own and a retry replays it.
-        _abandon(task)
-        raise
-    if task in done:
-        return task.result()
-    task.cancel()
-    _abandon(task)
-    raise DeadlineExceededError
 
 
 def unavailable(reason: str) -> JSONResponse:
@@ -247,6 +207,9 @@ def main() -> None:
         port=PORT,
         # Idle connections stay open this long (D40e); tally needs at least 5 s (D13).
         timeout_keep_alive=settings.keep_alive_seconds(),
+        # No log line per request: the counters count them, and the bench measures the service
+        # rather than its logging (D48.5).
+        access_log=False,
     )
 
 

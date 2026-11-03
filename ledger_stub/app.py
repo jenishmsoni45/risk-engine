@@ -34,6 +34,7 @@ from ledger_stub.transfers import (
 )
 from risk import settings
 from risk.checks import check_kafka_topic, check_postgres, health_response, metrics_response
+from risk.deadlines import DeadlineExceededError, within
 from risk.problems import bad_request, problem
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -48,6 +49,9 @@ KEY_REUSED = "Idempotency-Key was already used for a different request"
 POOL_MAX_SIZE = 10
 POOL_TIMEOUT_S = 2.0
 STATEMENT_TIMEOUT_MS = 5000
+# The server enforces statement_timeout, which a frozen server never does; this bound is the
+# stub's own, on each database step, so a frozen Postgres answers 503 too (D48.3).
+DATABASE_STEP_S = STATEMENT_TIMEOUT_MS / 1000
 
 TRANSFERS = Counter(
     "stub_transfers",
@@ -117,7 +121,7 @@ def create_app(config: StubConfig | None = None) -> FastAPI:
             return bad_request("Invalid request content.", exc.errors, instance=INSTANCE)
         try:
             return await post_transfer(request.app, key, transfer)
-        except psycopg.Error:
+        except (psycopg.Error, DeadlineExceededError):
             log.warning("database unavailable or too slow; answering 503", exc_info=True)
             TRANSFERS.labels("database_unavailable").inc()
             return problem(
@@ -159,13 +163,16 @@ async def post(
     risk_check: str,
     decision: Decided | None,
 ) -> Response:
-    outcome = await store.post(
-        app.state.pool,
-        key=key,
-        request_hash=request_hash,
-        request=transfer,
-        risk_check=risk_check,
-        decision_id=decision.decision_id if decision else None,
+    outcome = await within(
+        store.post(
+            app.state.pool,
+            key=key,
+            request_hash=request_hash,
+            request=transfer,
+            risk_check=risk_check,
+            decision_id=decision.decision_id if decision else None,
+        ),
+        DATABASE_STEP_S,
     )
     if isinstance(outcome, store.Saved):
         return replay(outcome, request_hash)
@@ -178,7 +185,7 @@ async def post_transfer(app: FastAPI, key: str, transfer: TransferRequest) -> Re
     request_hash = transfer.request_hash()
     # A saved response is replayed (or is a key conflict) without asking again: the decision
     # API already answered the request that saved it.
-    saved = await store.saved(app.state.pool, key)
+    saved = await within(store.saved(app.state.pool, key), DATABASE_STEP_S)
     if saved is not None:
         return replay(saved, request_hash)
 
