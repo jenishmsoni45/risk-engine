@@ -7,6 +7,7 @@ import subprocess
 
 import pytest
 
+from ml.paysim import COLUMNS
 from tests.helpers import ROOT, read_env_file
 
 
@@ -23,6 +24,15 @@ def test_path_is_git_ignored(path: str) -> None:
 def test_nothing_under_data_or_env_is_tracked() -> None:
     tracked = git("ls-files", "--", ".env", "data").stdout.split()
     assert tracked == []
+
+
+def test_no_tracked_file_holds_paysim_rows() -> None:
+    """Phase 6, criterion 9, wherever a CSV might land: no tracked file starts a PaySim table,
+    in data/, ml/reports/ or anywhere else (CLAUDE.md). The header is built here, so this file
+    doesn't hold it either."""
+    header = ",".join(COLUMNS)
+    found = git("grep", "--fixed-strings", "--files-with-matches", header)
+    assert found.returncode == 1, found.stdout  # 1: no tracked file matches
 
 
 def test_env_example_is_tracked_and_not_ignored() -> None:
