@@ -439,6 +439,20 @@ Eight questions the docs didn't settle, or that earlier phases left to this one,
    - Options: run during the phase once the code is committed; the owner runs it.
    - Answer: **run during the phase** (owner), once the code is committed; the results, and the README tables made from them, are committed in this phase's PR.
 
+### D49. The rest of the bench procedure (2026-11-02)
+
+design.md section 12, D40o and D48.2 fix the bench's steps, first rate, budget, error limit and hot-account sizes. The choices below fill in the rest. They were made while writing `make bench` (`bench/run.py`), and the owner accepted them before the bench was run. No doc changes.
+
+| # | Choice | Value | Why |
+|---|---|---|---|
+| a | Holding the rate | a step also stops when k6 drops more than 1% of the requests it planned (rate × step length) | design.md 12 has the report name the highest rate held when k6 can't hold the arrival rate; this makes "can't hold" a number |
+| b | Highest rate | 12,800 requests a second, eight doublings from 50 | a backstop, so a run ends even if no stop rule fires |
+| c | Accounts | senders and receivers drawn at random from 10,000 accounts | load spreads over many keys, so only the hot-account scenario concentrates on one sender |
+| d | Hot preload | the hot sender's transfers are published to `ledger.entries` in tally's event format, with `createdAt` spread over the 23 hours before the preload, so every one is inside the 24 h window | the window grows through the same path as real events (D48.2) |
+| e | Preload wait | up to 30 min for the consumer to apply each preload; past that the bench fails | a stuck consumer ends the run with a message instead of hanging it |
+| f | Fresh stack per scenario | each scenario runs on its own Compose project, `risk-engine-bench`, started empty and removed with its volumes at the end; the normal stack must be stopped first, since both use the same ports | every scenario starts from the same state and the normal stack's data is left alone, as D48.6 does for `make e2e` |
+| g | Quick tries | `BENCH_STEP_SECONDS` shortens every step; the conditions file records the step length, and `bench/report.py` refuses results whose steps aren't 3 min or whose tree wasn't clean | a quick check of the runner can never reach README.md |
+
 ## Open questions
 
 - **O24. How 2b runs LightGBM on this Mac.** LightGBM's macOS wheel needs OpenMP from Homebrew (`libomp`), and CLAUDE.md allows no installs on the Mac. Options include running training, the backtest and shadow scoring only inside Docker, where the image provides OpenMP, or the owner installing libomp. To be decided before Phase 6 starts; nothing earlier depends on it.
