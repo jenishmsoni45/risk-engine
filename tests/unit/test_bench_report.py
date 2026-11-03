@@ -9,12 +9,16 @@ from __future__ import annotations
 
 import json
 import subprocess
+import uuid
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from bench import report, run
+from risk.features.compute import net_entry
+from risk.features.events import parse_event
+from risk.timestamps import epoch_ms
 
 
 def summary(p50: float, p99: float, count: int, failed: float, dropped: int = 0) -> dict[str, Any]:
@@ -129,8 +133,27 @@ def test_errors_before_the_crossing_name_the_highest_rate_held(results: Path) ->
 
 def test_the_hot_account_table_shows_p99_against_the_window(results: Path) -> None:
     block, _ = report.render(results)
+    assert "#### Hot account: one receiver, 50 requests a second" in block
     assert "| 1000 | 5500 | 3.0 | 8.0 | 0.00% |" in block
-    assert "p99 first passes 50 ms with **10000 preloaded events**" in block
+    assert (
+        "p99 first passes 50 ms with **10000 preloaded events** in the receiver's 24 h window."
+        in block
+    )
+
+
+def test_a_preloaded_event_adds_only_to_the_hot_accounts_incoming_window() -> None:
+    """D50: the preload fills the hot receiver's incoming set, and the consumer's own parsing
+    and netting take the event as tally's: an inflow of 100 to the hot account, an outflow from
+    one of the bench's accounts, at the createdAt given."""
+    hot = uuid.uuid4()
+    created_ms = 1_798_000_000_123
+    for number in (0, 1, run.ACCOUNTS - 1, run.ACCOUNTS, 999_999):
+        entry_id, document = run.hot_event(hot, number, created_ms)
+        event = parse_event(entry_id.encode(), json.dumps(document).encode())
+        assert epoch_ms(event.created_at) == created_ms
+        movements = {m.account_id: (m.direction, m.amount) for m in net_entry(event)}
+        sender = uuid.UUID(run.account(1 + number % run.ACCOUNTS))
+        assert movements == {hot: ("in", 100), sender: ("out", 100)}
 
 
 def test_the_conditions_are_listed(results: Path) -> None:

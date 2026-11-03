@@ -8,9 +8,10 @@ alone (D49). The normal stack must be stopped first: both use the same ports.
   passes 50 ms, errors pass 1% or k6 can't hold the rate.
 - stub: the same steps against the stub's POST /transfers, so the decision call, the posting, the
   relay and the consumer run together.
-- hot: every request from one sender, whose 24 h window is preloaded through Kafka to 1,000,
-  10,000, 100,000 and 1,000,000 events; 50 requests a second for 3 minutes at each size, until p99
-  passes 50 ms (D48.2).
+- hot: every request to one receiver, from senders drawn at random, whose 24 h window is preloaded
+  through Kafka to 1,000, 10,000, 100,000 and 1,000,000 events; 50 requests a second for 3 minutes
+  at each size, until p99 passes 50 ms (D48.2, D50). A receiver, because each decision records an
+  attempt on its sender: a hot sender's window would grow with the bench's own requests.
 
 Each step writes k6's summary and a file of what the stack saw (decisions, feature lag, consumer
 offset lag, the stub's backup answers, the hot window's size); each scenario writes a conditions
@@ -356,10 +357,41 @@ def rate_steps(out: Path, scenario: str, step_s: int) -> None:
 # --- The hot account -----------------------------------------------------------------------------
 
 
+def account(n: int) -> str:
+    """The bench's account n, from 1 to ACCOUNTS, spelt as bench/k6/load.js spells it."""
+    return f"00000000-0000-4000-8000-{n:012x}"
+
+
+def hot_event(hot: uuid.UUID, number: int, created_ms: int) -> tuple[str, dict[str, Any]]:
+    """Preloaded transfer `number`: 100 cents into the hot account from one of the bench's
+    accounts, in tally's event format (design.md 1.2). Returns its entry id and document."""
+    created = format_instant(datetime.fromtimestamp(created_ms / 1000, UTC))
+    entry_id = str(uuid.uuid4())
+    return entry_id, {
+        "id": entry_id,
+        "kind": "transfer",
+        "reversesId": None,
+        "description": None,
+        "effectiveAt": created,
+        "createdAt": created,
+        "decisionId": None,
+        "riskCheck": "none",
+        "lines": [
+            {
+                "id": 2 * number + 1,
+                "accountId": account(1 + number % ACCOUNTS),
+                "amount": -100,
+                "currency": "CAD",
+            },
+            {"id": 2 * number + 2, "accountId": str(hot), "amount": 100, "currency": "CAD"},
+        ],
+    }
+
+
 def preload(hot: uuid.UUID, start: int, total: int) -> None:
-    """Publishes transfers from the hot sender, numbered start to total - 1, with createdAt spread
-    over the 23 hours before now, in tally's event format; then waits until the consumer has
-    committed past all of them."""
+    """Publishes transfers into the hot account, numbered start to total - 1, with createdAt
+    spread over the 23 hours before now; then waits until the consumer has committed past all of
+    them."""
     producer = Producer(
         {
             "bootstrap.servers": KAFKA,
@@ -373,33 +405,7 @@ def preload(hot: uuid.UUID, start: int, total: int) -> None:
     count = total - start
     for n in range(count):
         created_ms = now_ms - span_ms + (n * span_ms) // max(count, 1)
-        created = format_instant(datetime.fromtimestamp(created_ms / 1000, UTC))
-        entry_id = str(uuid.uuid4())
-        receiver = f"00000000-0000-4000-8000-{1 + (start + n) % ACCOUNTS:012x}"
-        document = {
-            "id": entry_id,
-            "kind": "transfer",
-            "reversesId": None,
-            "description": None,
-            "effectiveAt": created,
-            "createdAt": created,
-            "decisionId": None,
-            "riskCheck": "none",
-            "lines": [
-                {
-                    "id": 2 * (start + n) + 1,
-                    "accountId": str(hot),
-                    "amount": -100,
-                    "currency": "CAD",
-                },
-                {
-                    "id": 2 * (start + n) + 2,
-                    "accountId": receiver,
-                    "amount": 100,
-                    "currency": "CAD",
-                },
-            ],
-        }
+        entry_id, document = hot_event(hot, start + n, created_ms)
         while True:
             try:
                 producer.produce(TOPIC, key=entry_id.encode(), value=json.dumps(document).encode())
@@ -426,7 +432,7 @@ def hot_steps(out: Path, step_s: int) -> None:
         loaded = size
         name = f"hot-{size:07d}"
         summary, started, ended = k6_step(
-            out, name, "hot", API_URL, HOT_RATE, step_s, HOT_SENDER=str(hot)
+            out, name, "hot", API_URL, HOT_RATE, step_s, HOT_RECEIVER=str(hot)
         )
         rows = decisions_between(started, ended + timedelta(seconds=1))
         windows = [sum(features[f] for f in WINDOW_FEATURES) for _, features in rows]

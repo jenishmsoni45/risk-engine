@@ -141,7 +141,7 @@ def hot_table(rows: list[dict[str, Any]]) -> list[str]:
     over = [r for r in rows if r.get("stopped")]
     sentence = (
         f"p99 first passes 50 ms with **{over[0]['preloaded']} preloaded events** in the "
-        "sender's 24 h window."
+        "receiver's 24 h window."
         if over
         else "p99 stayed within 50 ms at every window size run."
     )
@@ -179,7 +179,7 @@ def render(folder: Path) -> tuple[str, list[str]]:
     sections = (
         ("direct", "Straight to the decision API", direct_table),
         ("stub", "Through the ledger stub (decision call, posting, relay, consumer)", stub_table),
-        ("hot", "Hot account: one sender, 50 requests a second", hot_table),
+        ("hot", "Hot account: one receiver, 50 requests a second", hot_table),
     )
     for scenario, title, table in sections:
         if scenario in conditions:

@@ -4,7 +4,8 @@
 //
 // Environment:
 //   TARGET    decisions (POST /v1/decisions), transfers (the stub's POST /transfers) or
-//             hot (POST /v1/decisions, every request from the one sender HOT_SENDER)
+//             hot (POST /v1/decisions, every request to the one receiver HOT_RECEIVER, from
+//             senders drawn at random: D50)
 //   BASE_URL  the API's or the stub's address
 //   RATE      requests a second;  DURATION  the step's length, as k6 spells it (3m)
 //   ACCOUNTS  how many accounts senders and receivers are drawn from
@@ -19,14 +20,14 @@ const RATE = parseInt(__ENV.RATE, 10);
 const DURATION = __ENV.DURATION;
 const ACCOUNTS = parseInt(__ENV.ACCOUNTS, 10);
 const RUN_ID = __ENV.RUN_ID;
-const HOT_SENDER = __ENV.HOT_SENDER;
+const HOT_RECEIVER = __ENV.HOT_RECEIVER;
 const SUMMARY = __ENV.SUMMARY;
 
 if (!['decisions', 'transfers', 'hot'].includes(TARGET)) {
   throw new Error(`TARGET must be decisions, transfers or hot, got ${TARGET}`);
 }
-if (TARGET === 'hot' && !HOT_SENDER) {
-  throw new Error('TARGET=hot needs HOT_SENDER');
+if (TARGET === 'hot' && !HOT_RECEIVER) {
+  throw new Error('TARGET=hot needs HOT_RECEIVER');
 }
 
 // What counts as an answer rather than an error: a decision from the API; from the stub, a
@@ -66,7 +67,8 @@ export default function () {
   while (to === from) {
     to = pick();
   }
-  const sender = TARGET === 'hot' ? HOT_SENDER : account(from);
+  const sender = account(from);
+  const receiver = TARGET === 'hot' ? HOT_RECEIVER : account(to);
   const amount = 100 + Math.floor(Math.random() * 9900);
   const id = `${RUN_ID}-${__VU}-${__ITER}`;
   const headers = { 'Content-Type': 'application/json' };
@@ -75,7 +77,7 @@ export default function () {
     headers['Idempotency-Key'] = id;
     http.post(
       `${BASE_URL}/transfers`,
-      JSON.stringify({ fromAccountId: sender, toAccountId: account(to), amount, currency: 'CAD' }),
+      JSON.stringify({ fromAccountId: sender, toAccountId: receiver, amount, currency: 'CAD' }),
       { headers },
     );
     return;
@@ -85,7 +87,7 @@ export default function () {
     JSON.stringify({
       requestId: id,
       fromAccountId: sender,
-      toAccountId: account(to),
+      toAccountId: receiver,
       amount,
       currency: 'CAD',
       requestedAt: new Date().toISOString(),
