@@ -78,6 +78,12 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       # Topics come only from the topics service, never from a client touching a new name (D42).
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      # The log lives in a volume, so it lasts as long as Postgres's: bad_events' offsets keep
+      # naming the same messages, and the rebuild has the log to replay (D47, D48.4).
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      # The image creates this folder for its own user, so a new volume starts writable.
+      - kafka-data:/var/lib/kafka/data
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
       interval: 10s
@@ -169,3 +175,4 @@ services:
 
 volumes:
   postgres-data:
+  kafka-data:
