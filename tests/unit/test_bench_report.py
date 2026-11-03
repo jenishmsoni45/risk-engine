@@ -8,6 +8,7 @@ Built on small result folders written here in the shape bench/run.py writes.
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -190,3 +191,40 @@ def test_quantiles_by_nearest_rank() -> None:
     assert run.nearest_rank(values, 0.99) == 99
     assert run.nearest_rank([7], 0.99) == 7
     assert run.nearest_rank([], 0.5) is None
+
+
+def test_a_runs_own_results_leave_the_tree_clean_but_any_other_change_does_not(
+    tmp_path: Path,
+) -> None:
+    """The stub and hot scenarios run after direct has written its files to bench/results/, so
+    those files mustn't mark them as run from a changed tree; anything else must."""
+
+    def git(*args: str) -> None:
+        subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", *args],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+    git("init", "--quiet")
+    (tmp_path / "code.py").write_text("x = 1\n")
+    git("add", "code.py")
+    git("commit", "--quiet", "--message", "start")
+    assert run.tree_clean(tmp_path)
+
+    folder = tmp_path / "bench" / "results" / "2026-11-28"
+    folder.mkdir(parents=True)
+    (folder / "conditions-direct.json").write_text("{}\n")
+    assert run.tree_clean(tmp_path)
+
+    (tmp_path / "notes.txt").write_text("new\n")
+    assert not run.tree_clean(tmp_path)
+    (tmp_path / "notes.txt").unlink()
+
+    (tmp_path / "code.py").write_text("x = 2\n")
+    assert not run.tree_clean(tmp_path)
+
+
+def test_a_failing_git_never_counts_as_a_clean_tree(tmp_path: Path) -> None:
+    assert not run.tree_clean(tmp_path / "missing")

@@ -197,6 +197,23 @@ def quiet(args: Sequence[str]) -> str:
         return ""
 
 
+def tree_clean(root: Path = ROOT) -> bool:
+    """Whether the tree matches its commit, leaving out bench/results/, where a run's earlier
+    scenarios have already written their files. False when git itself fails."""
+    try:
+        done = subprocess.run(
+            ["git", "status", "--porcelain", "--", ".", ":(exclude)bench/results"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return done.returncode == 0 and done.stdout == ""
+
+
 def conditions(scenario: str, step_s: int) -> dict[str, Any]:
     rules = ruleset.load(ROOT / "risk" / "rules" / "ruleset.yaml")
     info = json.loads(quiet(["docker", "info", "--format", "{{json .}}"]) or "{}")
@@ -205,7 +222,7 @@ def conditions(scenario: str, step_s: int) -> dict[str, Any]:
         "scenario": scenario,
         "recorded_at": format_instant(utc_now()),
         "git_commit": quiet(["git", "rev-parse", "HEAD"]),
-        "git_clean": quiet(["git", "status", "--porcelain"]) == "",
+        "git_clean": tree_clean(),
         "rule_set_version": rules.version,
         "rule_set_sha256": rules.sha256,
         "host": {
