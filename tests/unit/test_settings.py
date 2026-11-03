@@ -15,6 +15,8 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         "KEEP_ALIVE_SECONDS",
         "LATENESS_MARGIN_SECONDS",
         "CONSUMER_METRICS_PORT",
+        "CONSUMER_GROUP",
+        "CONSUMER_START",
         "STUB_RISK_URL",
         "STUB_RISK_TIMEOUT_MS",
         "STUB_ON_TIMEOUT_DEFAULT",
@@ -28,6 +30,8 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.keep_alive_seconds() == 10
     assert settings.lateness_margin_ms() == 300_000
     assert settings.consumer_metrics_port() == 8002
+    assert settings.consumer_group() == "risk-features"
+    assert settings.consumer_start() == "earliest"
     assert StubConfig.from_env() == StubConfig(
         database_url="postgresql://dummy@db/dummy",
         kafka_bootstrap=settings.kafka_bootstrap(),
@@ -62,6 +66,7 @@ def test_a_relay_interval_of_zero_is_allowed(monkeypatch: pytest.MonkeyPatch) ->
         ("STUB_RELAY_POLL_MS", "-1"),
         ("STUB_RELAY_BATCH", "0"),
         ("STUB_ON_TIMEOUT_DEFAULT", "deny"),
+        ("CONSUMER_START", "end"),
     ],
 )
 def test_a_bad_value_names_the_variable(
@@ -75,6 +80,7 @@ def test_a_bad_value_names_the_variable(
         settings.keep_alive_seconds()
         settings.lateness_margin_ms()
         settings.consumer_metrics_port()
+        settings.consumer_start()
         StubConfig.from_env()
 
     with pytest.raises(RuntimeError, match=name):

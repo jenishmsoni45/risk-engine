@@ -64,6 +64,23 @@ def consumer_metrics_port() -> int:
     return _int("CONSUMER_METRICS_PORT", 8002, 1)
 
 
+CONSUMER_STARTS = ("earliest", "latest")
+
+
+def consumer_group() -> str:
+    """CONSUMER_GROUP (D48.6): the consumer group the feature consumer joins."""
+    return os.environ.get("CONSUMER_GROUP") or "risk-features"
+
+
+def consumer_start() -> str:
+    """CONSUMER_START (D48.6): where a group with no committed offsets starts, `earliest` (the
+    oldest event kept) or `latest` (the topic's end, for make e2e)."""
+    value = os.environ.get("CONSUMER_START") or "earliest"
+    if value not in CONSUMER_STARTS:
+        raise RuntimeError(f"CONSUMER_START must be one of {CONSUMER_STARTS}, got {value!r}")
+    return value
+
+
 def stub_risk_url() -> str:
     return os.environ.get("STUB_RISK_URL") or "http://api:8000"
 

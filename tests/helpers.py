@@ -381,16 +381,28 @@ def publish(
     return [positions[index] for index in range(len(messages))]
 
 
+def topic_ends() -> dict[int, int]:
+    """partition -> the offset the next message published to it will get."""
+    consumer = Consumer({"bootstrap.servers": KAFKA_HOST_BOOTSTRAP, "group.id": unique("ends")})
+    try:
+        return {
+            p: consumer.get_watermark_offsets(TopicPartition(TOPIC, p), timeout=10)[1]
+            for p in range(3)
+        }
+    finally:
+        consumer.close()
+
+
 class ConsumerOffsets:
     """The feature consumer group's committed offsets. The consumer commits only after the writes
     for every message before an offset (D40h), so a committed offset past a message means its
     writes are done. Reading them doesn't join the group."""
 
-    def __init__(self) -> None:
+    def __init__(self, group: str = GROUP_ID) -> None:
         self.consumer = Consumer(
             {
                 "bootstrap.servers": KAFKA_HOST_BOOTSTRAP,
-                "group.id": GROUP_ID,
+                "group.id": group,
                 "enable.auto.commit": False,
             }
         )
