@@ -497,6 +497,8 @@ Choices made at the start of Phase 6, within D32, D33, D36, D37, D40p, D40u and 
 | h | When the replay stops | on any answer but 201; on a 201 whose `createdAt` isn't the replay time, which means the stub isn't in replay mode; when the watermark hasn't reached the previous transfer's time within 30 s. It refuses to start when the watermark is already at or past the first transfer's time | every replayed transfer is decided and applied before the next (D36), or the run says why not |
 | i | Dependencies | none added: the loader, the profile and the offline pipeline use Python's own csv, decimal and uuid modules | Phase 6 trains nothing; pandas (D40s) waits until a phase needs it |
 | j | The profile's report | `ml/reports/paysim_profile.md`, written by the profile script, naming the CSV's SHA-256 | a committed report, traceable to one file and one script (D29) |
+| k | Which rows share an hour's spacing (D33) | the transfers the loader keeps, TRANSFER and CASH_OUT rows of at least 1 cent, in file order; the other types take no slot | the loader's output is evenly spaced, whatever else the hour holds |
+| l | Where the hour of day (D35) is computed | `risk/features/compute.py`, beside the 31 features | the offline pipeline now and the shadow scorer in Phase 8 read it from one place (CLAUDE.md) |
 
 ### D53. The burst test can't promise one attempt (2026-11-03)
 

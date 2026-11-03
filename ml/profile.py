@@ -156,9 +156,14 @@ def percentile(ordered: Sequence[int], q: int) -> int:
 
 
 def report(
-    path: Path, digest: str, raw: RawCounts, stats: LoadStats | None,
-    sample: SampleCounts | None, rules: ruleset.RuleSet, error: str | None,
-) -> str:  # fmt: skip
+    path: Path,
+    digest: str,
+    raw: RawCounts,
+    stats: LoadStats | None,
+    sample: SampleCounts | None,
+    rules: ruleset.RuleSet,
+    error: str | None,
+) -> str:
     lines = [
         "# PaySim profile",
         "",

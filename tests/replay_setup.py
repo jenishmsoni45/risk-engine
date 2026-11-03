@@ -9,18 +9,30 @@ in a new namespace, so its keys and accounts never meet an earlier run's rows in
 
 from __future__ import annotations
 
+import time
 import uuid
 from pathlib import Path
 
 from ml.generate import generate, write_csv
 from ml.paysim import Transfer, load
 from tests.feature_state import STACK_DB, client
-from tests.helpers import topic_ends, wait_until_consumed
+from tests.helpers import count, topic_ends, wait_until_consumed
+
+
+def outbox_drained(timeout: float = 30) -> None:
+    """Waits until every posted transfer has been published. A stub run in a test process may
+    stop with rows left in the shared outbox, which the stack's stub then publishes."""
+    deadline = time.monotonic() + timeout
+    while count("select count(*) from stub.outbox where published_at is null"):
+        assert time.monotonic() < deadline, f"the outbox didn't drain within {timeout} s"
+        time.sleep(0.05)
 
 
 def fresh_watermark() -> None:
-    """The stack's Redis emptied once the consumer has caught up with ledger.entries, so no
-    event published earlier can raise the watermark afterwards."""
+    """The stack's Redis emptied once every posted transfer has been published and the consumer
+    has applied everything on ledger.entries, so no earlier event can raise the watermark
+    afterwards."""
+    outbox_drained()
     ends = topic_ends()
     wait_until_consumed([(p, end - 1) for p, end in ends.items() if end > 0], timeout=60)
     client(STACK_DB).flushdb()

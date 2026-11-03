@@ -66,7 +66,7 @@ class ParityReport:
         out = [
             f"compared {self.compared} transfers: {self.equal} equal, "
             f"{len(self.mismatches)} different, {len(self.missing)} without a decision row",
-            "transfers whose window held members (online = offline for each one compared):",
+            "transfers whose window held at least one member, in the offline recompute:",
         ]
         for family in FAMILIES:
             counts = ", ".join(
@@ -160,10 +160,8 @@ def read_env() -> dict[str, str]:
 
 def compose(project: str, *args: str, timeout: float = 900) -> str:
     files = [arg for name in COMPOSE_FILES for arg in ("--file", name)]
-    command = [
-        "docker", "compose", "--project-name", project, "--env-file", str(env_file()),
-        *files, *args,
-    ]  # fmt: skip
+    command = ["docker", "compose", "--project-name", project, "--env-file", str(env_file())]
+    command += [*files, *args]
     done = subprocess.run(
         command, cwd=ROOT, capture_output=True, text=True, timeout=timeout, check=False
     )
