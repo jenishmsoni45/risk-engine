@@ -217,8 +217,14 @@ class FeatureConsumer:
             self.poll()
 
     def poll(self) -> None:
+        """Waits up to POLL_TIMEOUT_S for one message, then takes what is already fetched, up to
+        BATCH_SIZE in all, without waiting (D51.1). librdkafka waits out the timeout unless a
+        batch fills, so asking for the whole batch at once kept a lone event waiting."""
         self._resume_due()
-        self.process(self.source.consume(num_messages=BATCH_SIZE, timeout=POLL_TIMEOUT_S))
+        messages = self.source.consume(num_messages=1, timeout=POLL_TIMEOUT_S)
+        if messages:
+            messages += self.source.consume(num_messages=BATCH_SIZE - 1, timeout=0)
+        self.process(messages)
 
     def process(self, messages: list[Message]) -> None:
         commit: dict[Partition, int] = {}
