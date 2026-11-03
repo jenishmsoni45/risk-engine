@@ -306,7 +306,7 @@ If the deadline passes before step 7 commits, or Redis or Postgres fails, the an
 - **Through the caller**: the same steps against the stub's `POST /transfers`, so the decision call, the posting and the relay run together.
 - **Timeout rate**: the stub's backup answers over its transfers, from its `/metrics`.
 - **Consumer lag**: the distribution of `feature_lag_ms` over the run's decisions, and the consumer group's offset lag at the end.
-- **Hot account**: one sender for every transfer; p99 against the size of its 24 h window. The window is filled through Kafka to 1,000, 10,000, 100,000 and 1,000,000 events; at each size, 50 requests a second go straight to the decision API for 3 minutes, and the run stops after the first size whose p99 passes 50 ms (D48.2).
+- **Hot account**: one receiver for every transfer, from senders drawn at random; p99 against the size of its 24 h window. The window is filled through Kafka to 1,000, 10,000, 100,000 and 1,000,000 events; at each size, 50 requests a second go straight to the decision API for 3 minutes, and the run stops after the first size whose p99 passes 50 ms (D48.2). The hot account receives rather than sends because every decision records an attempt on its sender, so a hot sender's window would grow with the bench's own requests during each step (D50).
 - **Shadow cost** (2b): the latency steps with shadow off and on.
 - **Recording**: each run writes its k6 summary and a conditions file (CPU, memory, OS, Docker version and VM size, image tags, git commit and whether the tree was clean, rule set version) to `bench/results/<UTC date>/`. A script turns result files into the README's tables, so every README number comes from a script (D29).
 

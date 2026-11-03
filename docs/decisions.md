@@ -453,6 +453,15 @@ design.md section 12, D40o and D48.2 fix the bench's steps, first rate, budget, 
 | f | Fresh stack per scenario | each scenario runs on its own Compose project, `risk-engine-bench`, started empty and removed with its volumes at the end; the normal stack must be stopped first, since both use the same ports | every scenario starts from the same state and the normal stack's data is left alone, as D48.6 does for `make e2e` |
 | g | Quick tries | `BENCH_STEP_SECONDS` shortens every step; the conditions file records the step length, and `bench/report.py` refuses results whose steps aren't 3 min or whose tree wasn't clean | a quick check of the runner can never reach README.md |
 
+### D50. The hot account receives instead of sending (2026-11-03)
+
+- Found during Phase 5's first full `make bench`: the hot sender's window didn't stay at the preloaded size during a step. Every decision records an attempt on its sender (design.md 3.3), and the attempts are one of the five sets the decision reads. At 50 requests a second for 3 minutes, the bench's own attempts grew the window to several times the first size of 1,000. p99 passed 50 ms during that first step, so the run stopped there, and the report credited the result to the 1,000 preloaded events. D48.2 asked for one cause at a time, and this run measured two.
+- Question: how to measure p99 against one account's window size.
+- Options: a hot receiver, with transfers from senders drawn at random; a hot sender at 5 requests a second, so its own attempts add at most 900 per step; keep the results and say what they show.
+- Answer: **a hot receiver** (owner). Every request goes to one account from one of the bench's 10,000 accounts, drawn at random. That account's 24 h incoming window is preloaded through Kafka to 1,000, 10,000, 100,000 and 1,000,000 events. The sizes, the rate, the step length and the stop rule are D48.2's. design.md 12 now says so. This replaces "the hot sender" in D48.2 and in D49 rows c and d; the rest of both stands.
+- Why: the decision reads the receiver's incoming set the same way it reads the sender's outgoing set, but the attempts land on the random senders. The window then stays at its preloaded size through each step, at the planned rate.
+- Consequences: only the hot scenario is run again. README.md's conditions list each scenario's commit, so they show that the hot results come from a later commit than the direct and stub results.
+
 ## Open questions
 
 - **O24. How 2b runs LightGBM on this Mac.** LightGBM's macOS wheel needs OpenMP from Homebrew (`libomp`), and CLAUDE.md allows no installs on the Mac. Options include running training, the backtest and shadow scoring only inside Docker, where the image provides OpenMP, or the owner installing libomp. To be decided before Phase 6 starts; nothing earlier depends on it.
