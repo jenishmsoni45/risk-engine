@@ -1,0 +1,10 @@
+# make e2e only (D26, D48.6), on top of docker-compose.yml, as the throwaway project
+# risk-engine-e2e: the consumer reads tally's broker instead of this stack's, in a new consumer
+# group that starts at the end of tally's topic, so events from tally's earlier runs never reach
+# the windows. Docker Desktop forwards host.docker.internal to the Mac, where tally publishes 9094.
+services:
+  consumer:
+    environment:
+      KAFKA_BOOTSTRAP: host.docker.internal:9094
+      CONSUMER_GROUP: ${E2E_CONSUMER_GROUP:?set by scripts/e2e.py}
+      CONSUMER_START: latest

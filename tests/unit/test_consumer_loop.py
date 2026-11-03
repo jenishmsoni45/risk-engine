@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from typing import Literal
 
 import pytest
 import redis
@@ -272,3 +273,55 @@ def test_the_consumer_reads_from_the_oldest_kept_event_and_commits_by_hand() -> 
     assert config["group.id"] == consumer.GROUP_ID
     assert config["enable.auto.commit"] is False
     assert config["auto.offset.reset"] == "earliest"
+
+
+def test_the_group_and_its_start_come_from_the_settings() -> None:
+    config = consumer.kafka_settings("kafka:9092", "risk-features-e2e", "latest")
+    assert config["group.id"] == "risk-features-e2e"
+    assert config["auto.offset.reset"] == "latest"
+
+
+class FakeOffsets:
+    """The offsets start_at_end reads and commits: partition -> committed offset (-1001 for none,
+    as the client reports it) and partition -> the topic's end."""
+
+    def __init__(self, committed: dict[int, int], ends: dict[int, int]) -> None:
+        self._committed = committed
+        self.ends = ends
+        self.commits: list[list[tuple[int, int]]] = []
+
+    def committed(
+        self, partitions: list[TopicPartition], timeout: float = -1
+    ) -> list[TopicPartition]:
+        return [
+            TopicPartition(TOPIC, p.partition, self._committed[p.partition]) for p in partitions
+        ]
+
+    def get_watermark_offsets(
+        self, partition: TopicPartition, timeout: float = -1, cached: bool = False
+    ) -> tuple[int, int]:
+        return 0, self.ends[partition.partition]
+
+    def commit(
+        self, *, offsets: list[TopicPartition], asynchronous: Literal[False]
+    ) -> list[TopicPartition]:
+        self.commits.append([(o.partition, o.offset) for o in offsets])
+        return offsets
+
+
+def test_starting_at_the_end_commits_the_end_of_each_partition_never_committed() -> None:
+    kafka = FakeOffsets(committed={0: -1001, 1: 7, 2: -1001}, ends={0: 40, 1: 50, 2: 60})
+    partitions = [TopicPartition(TOPIC, p) for p in range(3)]
+
+    committed = consumer.start_at_end(kafka, partitions)
+
+    # Partition 1 already has an offset and keeps it; the others start at their current end.
+    assert [(tp.partition, tp.offset) for tp in committed] == [(0, 40), (2, 60)]
+    assert kafka.commits == [[(0, 40), (2, 60)]]
+
+
+def test_starting_at_the_end_commits_nothing_when_every_partition_has_an_offset() -> None:
+    kafka = FakeOffsets(committed={0: 3, 1: 4, 2: 5}, ends={0: 9, 1: 9, 2: 9})
+    assert consumer.start_at_end(kafka, [TopicPartition(TOPIC, p) for p in range(3)]) == []
+    assert consumer.start_at_end(kafka, []) == []
+    assert kafka.commits == []

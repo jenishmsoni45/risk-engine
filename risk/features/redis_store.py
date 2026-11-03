@@ -105,6 +105,20 @@ def retention_ms(margin_ms: int) -> int:
     return LONGEST_WINDOW_MS + margin_ms
 
 
+def attempt_call(
+    sender: uuid.UUID, request_id: str, amount: int, requested_ms: int, retention: int
+) -> tuple[list[str], list[int | str]]:
+    """RECORD_ATTEMPT's keys and arguments, for the decision API and the rebuild alike."""
+    keys = [attempt_key(sender)]
+    args: list[int | str] = [
+        requested_ms,
+        member(amount, request_id),
+        requested_ms - retention,
+        SET_EXPIRY_S,
+    ]
+    return keys, args
+
+
 def parse_watermark(raw: Any) -> int:
     """`wm` in epoch ms; 0 when no event has been applied yet (D43)."""
     if raw is None:
@@ -204,12 +218,5 @@ class FeatureStore:
     ) -> None:
         """Adds `{amount}:{requestId}` at requestedAt and trims the sender's attempts below
         requestedAt - 24 h - margin. Adding the same attempt again changes nothing."""
-        await self._record_attempt(
-            keys=[attempt_key(sender)],
-            args=[
-                requested_ms,
-                member(amount, request_id),
-                requested_ms - self.retention_ms,
-                SET_EXPIRY_S,
-            ],
-        )
+        keys, args = attempt_call(sender, request_id, amount, requested_ms, self.retention_ms)
+        await self._record_attempt(keys=keys, args=args)

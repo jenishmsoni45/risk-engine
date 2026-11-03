@@ -409,6 +409,59 @@ Two questions the docs didn't settle, asked before any Phase 4 code.
 - Answer: **wipe the local data and rerun; the gap is a follow-up** (owner). The Phase 4 PR lists it under Follow-ups, next to Phase 5's rebuild and fault tests. No code or doc changes in Phase 4.
 - Why: the failure comes from test data left by earlier runs, not from the rules, and keeps Phase 4 to rules only.
 
+### D48. Gaps found at the start of Phase 5 (2026-11-02)
+
+Eight questions the docs didn't settle, or that earlier phases left to this one, asked before any Phase 5 code.
+
+1. **Where the rebuild starts once the watermark is gone.** design.md 3.5 replays `ledger.entries` from the offsets for `wm − 24 h − 5 min`, but a Redis flush loses `wm` with everything else.
+   - Options: from the topic's start when `wm` is missing, else from the offsets for `wm − 24 h − 5 min`; always from the topic's start; keep a copy of `wm` in Postgres.
+   - Answer: **from the topic's start when `wm` is missing** (owner). An event older than the retained range is dropped as late, or trimmed once newer events raise the watermark, so the result is the same as starting later, only slower. design.md 3.5 now says so.
+2. **The hot-account bench.** design.md 12 asks for p99 against the size of one sender's 24 h window without saying how the window grows.
+   - Options: preload the window to fixed sizes and measure each at a fixed rate; one long run at a fixed rate, grouping latencies by window size afterwards; the doubling rate steps with one sender.
+   - Answer: **preloaded sizes at a fixed rate** (owner). The hot sender's 24 h window is filled through Kafka to 1,000, then 10,000, 100,000 and 1,000,000 events; at each size the bench sends 50 requests a second straight to the decision API for 3 minutes, and stops after the first size whose p99 passes 50 ms. design.md 12 now says so.
+   - Why: one cause at a time, so the table shows which size breaks p99.
+3. **How long the stub waits for a frozen Postgres** (left to this phase by D45.3).
+   - Options: 5 s, then 503; tally's 35 s socket timeout; test a stopped Postgres instead of a paused one.
+   - Answer: **5 s, then 503** (owner). Each database step of the stub gives up after 5 s, the statement timeout it already copies from tally's transaction timeout, and the stub answers tally's 503 for its database. tally waits up to its 35 s socket timeout on a silent network, so the stub answers sooner: a known difference. design.md 1.3 now says so.
+4. **D47's follow-up, and the postmortem's bug.**
+   - Options: fix it now and write the postmortem on it; fix it now and write the postmortem on D44; leave it as a follow-up.
+   - Answer: **fix it now, and `docs/postmortem.md` tells it** (owner). Kafka keeps its log in a named volume, so the log lasts as long as Postgres's; `make clean` removes both (D41.6). This closes D47's follow-up.
+5. **The stub's other D45.3 follow-ups.**
+   - Options (any of): cap decision calls in flight at 100, as tally does; turn off uvicorn's access log.
+   - Answer: **both** (owner). The stub has at most 100 decision calls in flight; a call over that is no decision at once, with tally's outcome tag `unavailable`, and gets the backup answer (tally's `docs/risk-decision-call.md`). The decision API and the stub write no access log line per request; their counters count requests. design.md 1.3 now names the cap.
+6. **Where `make e2e`'s fresh stack lives.**
+   - Options: its own Compose project, removed at the end; wiping the normal stack's volumes.
+   - Answer: **its own Compose project**, `risk-engine-e2e` (owner), with its own volumes, removed at the end, so the normal stack's data is untouched. Its ports are the normal stack's, so `make e2e` first checks that the normal stack is stopped and says so if not. The consumer gains two settings, `CONSUMER_GROUP` and `CONSUMER_START`, for the new group that starts at the end of tally's topic. design.md 1.6 and architecture.md section 5 now say so.
+7. **What README.md says about how the project was built.** PLAN.md section 9 asks for a section on how Claude Code built it under the owner's plan and review; CLAUDE.md keeps any mention of Claude or AI out of commit messages and PR text, and says nothing of the README.
+   - Options: say it plainly; neutral wording that names no tool; the owner writes that paragraph.
+   - Answer: **say it plainly** (owner). Commit messages, PR titles and PR bodies still never mention it.
+8. **Who runs `make bench`.** Its steps take most of an hour with the laptop busy, and its results must come from a clean, committed tree.
+   - Options: run during the phase once the code is committed; the owner runs it.
+   - Answer: **run during the phase** (owner), once the code is committed; the results, and the README tables made from them, are committed in this phase's PR.
+
+### D49. The rest of the bench procedure (2026-11-02)
+
+design.md section 12, D40o and D48.2 fix the bench's steps, first rate, budget, error limit and hot-account sizes. The choices below fill in the rest. They were made while writing `make bench` (`bench/run.py`), and the owner accepted them before the bench was run. No doc changes.
+
+| # | Choice | Value | Why |
+|---|---|---|---|
+| a | Holding the rate | a step also stops when k6 drops more than 1% of the requests it planned (rate × step length) | design.md 12 has the report name the highest rate held when k6 can't hold the arrival rate; this makes "can't hold" a number |
+| b | Highest rate | 12,800 requests a second, eight doublings from 50 | a backstop, so a run ends even if no stop rule fires |
+| c | Accounts | senders and receivers drawn at random from 10,000 accounts | load spreads over many keys, so only the hot-account scenario concentrates on one sender |
+| d | Hot preload | the hot sender's transfers are published to `ledger.entries` in tally's event format, with `createdAt` spread over the 23 hours before the preload, so every one is inside the 24 h window | the window grows through the same path as real events (D48.2) |
+| e | Preload wait | up to 30 min for the consumer to apply each preload; past that the bench fails | a stuck consumer ends the run with a message instead of hanging it |
+| f | Fresh stack per scenario | each scenario runs on its own Compose project, `risk-engine-bench`, started empty and removed with its volumes at the end; the normal stack must be stopped first, since both use the same ports | every scenario starts from the same state and the normal stack's data is left alone, as D48.6 does for `make e2e` |
+| g | Quick tries | `BENCH_STEP_SECONDS` shortens every step; the conditions file records the step length, and `bench/report.py` refuses results whose steps aren't 3 min or whose tree wasn't clean | a quick check of the runner can never reach README.md |
+
+### D50. The hot account receives instead of sending (2026-11-03)
+
+- Found during Phase 5's first full `make bench`: the hot sender's window didn't stay at the preloaded size during a step. Every decision records an attempt on its sender (design.md 3.3), and the attempts are one of the five sets the decision reads. At 50 requests a second for 3 minutes, the bench's own attempts grew the window to several times the first size of 1,000. p99 passed 50 ms during that first step, so the run stopped there, and the report credited the result to the 1,000 preloaded events. D48.2 asked for one cause at a time, and this run measured two.
+- Question: how to measure p99 against one account's window size.
+- Options: a hot receiver, with transfers from senders drawn at random; a hot sender at 5 requests a second, so its own attempts add at most 900 per step; keep the results and say what they show.
+- Answer: **a hot receiver** (owner). Every request goes to one account from one of the bench's 10,000 accounts, drawn at random. That account's 24 h incoming window is preloaded through Kafka to 1,000, 10,000, 100,000 and 1,000,000 events. The sizes, the rate, the step length and the stop rule are D48.2's. design.md 12 now says so. This replaces "the hot sender" in D48.2 and in D49 rows c and d; the rest of both stands.
+- Why: the decision reads the receiver's incoming set the same way it reads the sender's outgoing set, but the attempts land on the random senders. The window then stays at its preloaded size through each step, at the planned rate.
+- Consequences: only the hot scenario is run again. README.md's conditions list each scenario's commit, so they show that the hot results come from a later commit than the direct and stub results.
+
 ## Open questions
 
 - **O24. How 2b runs LightGBM on this Mac.** LightGBM's macOS wheel needs OpenMP from Homebrew (`libomp`), and CLAUDE.md allows no installs on the Mac. Options include running training, the backtest and shadow scoring only inside Docker, where the image provides OpenMP, or the owner installing libomp. To be decided before Phase 6 starts; nothing earlier depends on it.

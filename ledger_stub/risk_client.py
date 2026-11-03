@@ -25,6 +25,9 @@ MAX_REPLY_BYTES = 16 * 1024
 # Below the 5 s for which the decision API keeps an idle connection, so the stub drops an idle
 # connection first and never sends on one being closed. tally uses the same 4 s (4.3).
 KEEP_ALIVE_S = 4.0
+# tally's limit (D13, D48.5): a transfer that finds this many calls in flight doesn't wait for a
+# slot; it is no decision at once, outcome `unavailable`, and gets the backup answer.
+MAX_IN_FLIGHT = 100
 
 
 @dataclass(frozen=True)
@@ -70,10 +73,19 @@ def parse_reply(body: bytes) -> Decided | None:
 
 
 class RiskClient:
-    def __init__(self, base_url: str, timeout_s: float, on_timeout_default: str) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        timeout_s: float,
+        on_timeout_default: str,
+        max_in_flight: int = MAX_IN_FLIGHT,
+    ) -> None:
         self.timeout_s = timeout_s
         # The onTimeout of the latest valid 200, or the configured default before one (D10).
         self.backup_answer = on_timeout_default
+        self.max_in_flight = max_in_flight
+        # Calls started and not yet ended; one event loop, so a plain count is enough.
+        self.in_flight = 0
         self._client = httpx.AsyncClient(
             base_url=base_url,
             # A backstop only: the deadline in decide() is the one that ends a call.
@@ -106,6 +118,9 @@ class RiskClient:
                 "requestedAt": format_instant(datetime.now(UTC)),
             }
         ).encode()
+        if self.in_flight >= self.max_in_flight:
+            return NoDecision("unavailable")
+        self.in_flight += 1
         started = time.monotonic()
         result: RiskResult
         try:
@@ -117,6 +132,8 @@ class RiskClient:
             # Refused, reset or broken; or httpx's own timeout, which the clock tells apart.
             timed_out = time.monotonic() - started >= self.timeout_s
             result = NoDecision("timeout" if timed_out else "unavailable")
+        finally:
+            self.in_flight -= 1
         if isinstance(result, Decided):
             self.backup_answer = result.on_timeout
         return result

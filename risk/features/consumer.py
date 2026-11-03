@@ -293,6 +293,8 @@ class ConsumerConfig:
     database_url: str
     margin_ms: int
     metrics_port: int
+    group: str = GROUP_ID
+    start: str = "earliest"  # or "latest" (D48.6)
 
     @classmethod
     def from_env(cls) -> ConsumerConfig:
@@ -302,18 +304,59 @@ class ConsumerConfig:
             database_url=settings.database_url(),
             margin_ms=settings.lateness_margin_ms(),
             metrics_port=settings.consumer_metrics_port(),
+            group=settings.consumer_group(),
+            start=settings.consumer_start(),
         )
 
 
-def kafka_settings(bootstrap: str) -> dict[str, str | int | bool]:
+def kafka_settings(
+    bootstrap: str, group: str = GROUP_ID, start: str = "earliest"
+) -> dict[str, str | int | bool]:
     return {
         "bootstrap.servers": bootstrap,
-        "group.id": GROUP_ID,
+        "group.id": group,
         # Offsets are committed by hand, after the writes they cover (D40h).
         "enable.auto.commit": False,
-        # A new consumer group starts at the oldest event kept, so no delayed event is skipped.
-        "auto.offset.reset": "earliest",
+        # By default a new consumer group starts at the oldest event kept, so no delayed event is
+        # skipped; make e2e starts a new group at the end of tally's topic instead (D48.6).
+        "auto.offset.reset": start,
     }
+
+
+class Offsets(Protocol):
+    """The calls start_at_end makes on confluent_kafka.Consumer."""
+
+    def committed(
+        self, partitions: list[TopicPartition], timeout: float = -1
+    ) -> list[TopicPartition]: ...
+
+    def get_watermark_offsets(
+        self, partition: TopicPartition, timeout: float = -1, cached: bool = False
+    ) -> tuple[int, int]: ...
+
+    def commit(
+        self, *, offsets: list[TopicPartition], asynchronous: Literal[False]
+    ) -> list[TopicPartition]: ...
+
+
+def start_at_end(kafka: Offsets, partitions: list[TopicPartition]) -> list[TopicPartition]:
+    """CONSUMER_START=latest (D48.6), on assignment: each partition the group has never committed
+    gets the topic's current end committed at once, before any message is read. A restart then
+    resumes from there instead of jumping to a later end and skipping what arrived meanwhile, and
+    make e2e can tell from the group's offsets when the consumer is in place. Returns the
+    offsets committed."""
+    if not partitions:
+        return []
+    fresh = []
+    for tp in kafka.committed(partitions, timeout=CALL_TIMEOUT_S):
+        if tp.offset < 0:
+            position = TopicPartition(tp.topic, tp.partition)
+            _, end = kafka.get_watermark_offsets(position, timeout=CALL_TIMEOUT_S)
+            fresh.append(TopicPartition(tp.topic, tp.partition, end))
+    if fresh:
+        kafka.commit(offsets=fresh, asynchronous=False)
+        log.info("starting at the end: %s", [(tp.partition, tp.offset) for tp in fresh])
+    return fresh
 
 
 def run(
@@ -329,15 +372,27 @@ def run(
     client = redis.Redis.from_url(
         config.redis_url, socket_timeout=CALL_TIMEOUT_S, socket_connect_timeout=CALL_TIMEOUT_S
     )
-    kafka = Consumer({**kafka_settings(config.bootstrap), **(kafka_overrides or {})})
+    kafka = Consumer(
+        {
+            **kafka_settings(config.bootstrap, config.group, config.start),
+            **(kafka_overrides or {}),
+        }
+    )
     try:
         handler = MessageHandler(
             LedgerWriter(client, config.margin_ms), BadEvents(config.database_url)
         )
         consumer = FeatureConsumer(kafka, handler, before_commit=before_commit)
+
+        def on_assign(assigned: Consumer, partitions: list[TopicPartition]) -> None:
+            consumer.on_rebalance(assigned, partitions)
+            if config.start == "latest":
+                # Committed before the assignment takes effect, so reading starts there.
+                start_at_end(assigned, partitions)
+
         kafka.subscribe(
             [TOPIC],
-            on_assign=consumer.on_rebalance,
+            on_assign=on_assign,
             on_revoke=consumer.on_rebalance,
             on_lost=consumer.on_rebalance,
         )

@@ -234,7 +234,7 @@ The amount comes first in the member because a `requestId` may contain a colon. 
 The ports avoid tally's (D31), so both stacks run at once for `make e2e`.
 
 - **Stub mode** (default, CI): the stub is the caller and this repo's Kafka carries the events.
-- **e2e mode** (`make e2e`, local only, D26): tally from the owner's clone is the caller, with `TALLY_RISK_ENABLED=true` and `TALLY_RISK_URL=http://localhost:8000`; the consumer reads tally's broker at `host.docker.internal:9094`. `make e2e` starts this repo's stack fresh and gives the consumer a new consumer group that starts at the end of tally's topic, so events left from tally's own runs never reach the windows.
+- **e2e mode** (`make e2e`, local only, D26): tally from the owner's clone is the caller, with `TALLY_RISK_ENABLED=true` and `TALLY_RISK_URL=http://localhost:8000`; the consumer reads tally's broker at `host.docker.internal:9094`. `make e2e` starts this repo's stack fresh, as its own Compose project `risk-engine-e2e` whose volumes are removed at the end, and gives the consumer a new consumer group that starts at the end of tally's topic (`CONSUMER_GROUP`, `CONSUMER_START`), so events left from tally's own runs never reach the windows (D48.6). The normal stack must be stopped first, since both use the same ports.
 
 ## 6. 2b: replay, offline pipeline, model and shadow
 

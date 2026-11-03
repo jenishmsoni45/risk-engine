@@ -48,6 +48,8 @@ tally's transfer path (D24), on port 8001:
 - Responses, as tally gives them: 201 with the entry (the same JSON as its event); 400 validation; 403 `/problems/transfer-held` or `/problems/transfer-blocked` with `decisionId`; 409 for a key reused with a different body or a 409 from the decision API; 503 `/problems/risk-unavailable`; 503 when its own Postgres fails.
 - The same key and body replay the saved 201 without asking the decision API. Only a posted transfer saves its key.
 - The decision call follows tally-integration.md 3.2 to 3.4: 100 ms for the whole call, the backup answer from the latest `onTimeout` with default `hold`, a body over 16 KiB or breaking the contract treated as no decision (D40k).
+- At most 100 decision calls are in flight at once, as in tally; a transfer that finds 100 in flight is no decision at once, outcome `unavailable`, and gets the backup answer (D48.5).
+- Each step on the stub's own Postgres gives up after 5 s and answers 503, so a frozen database never hangs the caller; tally's bound on a silent network is its 35 s socket timeout (D48.3).
 - Posting writes the entry to `stub.transfers` and its event to `stub.outbox` in one transaction; a relay loop publishes the outbox every 200 ms in batches of 100, keyed by entry id (D40k), each event with a `traceparent` header, one trace per batch, as tally's relay sends (D44). The interval is configurable, and 0 publishes at once.
 - Timestamps are written like tally's: UTC, `Z`, a fraction of 0, 3 or 6 digits.
 - Replay mode (2b, `STUB_REPLAY=1` only): the `X-Replay-Time` header sets `requestedAt`, `createdAt` and `effectiveAt` (D40v), and every transfer is posted whatever the decision, with `riskCheck: decided` and its `decisionId` (D40u). In replay mode a transfer without a decision is answered 503 and not posted, so a replay never logs a transfer without a decision.
@@ -118,6 +120,8 @@ Every setting comes from the environment, with `.env.example` holding throwaway 
 | `DECISION_DEADLINE_MS` | `60` | D40d |
 | `KEEP_ALIVE_SECONDS` | `10` | D40e |
 | `LATENESS_MARGIN_SECONDS` | `300` | D40c |
+| `CONSUMER_GROUP` | `risk-features` | D48.6 |
+| `CONSUMER_START` | `earliest`; `latest` makes a group with no committed offsets start at the topic's end | D48.6 |
 | `REDIS_URL`, `DATABASE_URL`, `KAFKA_BOOTSTRAP` | the Compose services | D31 |
 | `STUB_RISK_URL` | `http://api:8000` | D31 |
 | `STUB_RISK_TIMEOUT_MS` | `100` | D4 |
@@ -184,7 +188,7 @@ One Redis script fetches, for the five sets of a decision (sender `out`, `in`, `
 ### 3.5 One module, and rebuilding
 
 - `risk/features/` holds the only feature logic: netting an entry, window membership, the 31 features from members and `t`, and the names. The consumer, the API and (2b) the offline pipeline call it. The brute-force oracle in the tests is deliberately separate, because it checks the module.
-- Redis holds no state that can't be rebuilt (D40r): `make rebuild-features` clears the feature keys, replays `ledger.entries` from the offsets for time `wm − 24 h − 5 min`, and rebuilds attempt sets from `decisions`. This needs the topic to keep at least 24 h 5 min of messages, which Kafka's default retention exceeds.
+- Redis holds no state that can't be rebuilt (D40r): `make rebuild-features` clears the feature keys, replays `ledger.entries` from the offsets for time `wm − 24 h − 5 min`, and rebuilds attempt sets from `decisions`. When `wm` is gone too, as after a flush, it replays from the start of the topic; older events are then dropped as late or trimmed, so the result is the same (D48.1). This needs the topic to keep at least 24 h 5 min of messages, which Kafka's default retention exceeds.
 
 ## 4. The decision path
 
@@ -302,7 +306,7 @@ If the deadline passes before step 7 commits, or Redis or Postgres fails, the an
 - **Through the caller**: the same steps against the stub's `POST /transfers`, so the decision call, the posting and the relay run together.
 - **Timeout rate**: the stub's backup answers over its transfers, from its `/metrics`.
 - **Consumer lag**: the distribution of `feature_lag_ms` over the run's decisions, and the consumer group's offset lag at the end.
-- **Hot account**: one sender for every transfer; p99 against the size of its 24 h window.
+- **Hot account**: one receiver for every transfer, from senders drawn at random; p99 against the size of its 24 h window. The window is filled through Kafka to 1,000, 10,000, 100,000 and 1,000,000 events; at each size, 50 requests a second go straight to the decision API for 3 minutes, and the run stops after the first size whose p99 passes 50 ms (D48.2). The hot account receives rather than sends because every decision records an attempt on its sender, so a hot sender's window would grow with the bench's own requests during each step (D50).
 - **Shadow cost** (2b): the latency steps with shadow off and on.
 - **Recording**: each run writes its k6 summary and a conditions file (CPU, memory, OS, Docker version and VM size, image tags, git commit and whether the tree was clean, rule set version) to `bench/results/<UTC date>/`. A script turns result files into the README's tables, so every README number comes from a script (D29).
 

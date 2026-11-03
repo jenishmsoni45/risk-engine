@@ -1,0 +1,18 @@
+{
+  "consumer_offset_lag_at_end": 12700,
+  "decisions": 47147,
+  "ended_at": "2026-11-03T03:27:14.862024Z",
+  "feature_lag_ms": {
+    "count": 47147,
+    "max": 150372,
+    "p50": 31833,
+    "p99": 144758
+  },
+  "rate": 800,
+  "scenario": "stub",
+  "started_at": "2026-11-03T03:24:12.480927Z",
+  "stopped": "p99 passed 50 ms",
+  "stub_backup_answers": 18023,
+  "stub_transfers": 69807,
+  "summary": "stub-00800rps.json"
+}
