@@ -40,8 +40,13 @@ The idempotent insert, which is correct on its own, turned the mismatch from an 
 - `docker-compose.yml` sets `KAFKA_LOG_DIRS` to a path in the named volume `kafka-data`, so the log, the consumer group's committed offsets and `bad_events` all survive `make down` and all go together on `make clean`.
 - `tests/integration/test_kafka_log.py` recreates the broker's container, as `make down` and `make up` do, and checks that an event published before is still at its offset, that new events get later offsets, and that a malformed message published afterwards is stored under its own offset.
 
+## Epilogue: the fix's own changeover
+
+The bug struck once more, on the machine where it was fixed. The stack running there had been started before the fix, so its log still lived in its container. The first `make down` and `make up` afterwards created the new, empty `kafka-data` volume beside Postgres's old rows: the same mismatch, one last time. `test_bad_events.py` runs early in `make test`, while the new log's offsets were still low. Its cases published at offsets the old rows held, and they failed the way they did in Phase 4. So did the paused-Postgres fault test, which checks a bad event's row. Once the log had passed the old rows' highest offsets, the same tests passed with no data touched. From then on the two volumes last equally long, so it can't happen again.
+
 ## What changes from here
 
 - Any state keyed by another store's positions shares that store's lifetime, or carries something that tells generations apart. This project takes the first option.
 - A test that only ever runs on a fresh stack can't find a lifetime bug. The test above recreates one container on a stack that is already running instead.
 - When an idempotent write skips a conflict, it is worth asking what else could produce the same conflict.
+- Changing where a store keeps its data is itself a migration. The first start after the change pairs a new, empty store with the other stores' old state, so the change should clear that state too, or say plainly that the first run will fail this way.
