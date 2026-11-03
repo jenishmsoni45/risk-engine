@@ -102,3 +102,13 @@ def stub_relay_poll_ms() -> int:
 
 def stub_relay_batch() -> int:
     return _int("STUB_RELAY_BATCH", 100, 1)
+
+
+def stub_replay() -> bool:
+    """STUB_REPLAY (D40u): `1` turns on replay mode (design.md 1.3); unset, empty or `0` leaves it
+    off. Anything else stops the stub, so a typo never starts a replay or a normal stub by
+    mistake."""
+    value = os.environ.get("STUB_REPLAY") or "0"
+    if value not in ("0", "1"):
+        raise RuntimeError(f"STUB_REPLAY must be 0 or 1, got {value!r}")
+    return value == "1"

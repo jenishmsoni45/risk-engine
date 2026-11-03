@@ -3,6 +3,9 @@
 `POST /transfers` validates, replays a saved key, asks the decision API, and posts on allow (or on
 a backup allow), as tally's TransferOrchestrator does. Posting writes the entry and its outbox row
 in one transaction; the relay publishes them to ledger.entries.
+
+With STUB_REPLAY=1 (2b's replay, design.md 1.3) the transfer's time comes from X-Replay-Time and
+every decided transfer is posted, whatever the decision; one without a decision answers 503.
 """
 
 from __future__ import annotations
@@ -12,6 +15,8 @@ import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
+from datetime import datetime
 
 import psycopg
 from confluent_kafka import Producer
@@ -26,16 +31,18 @@ from ledger_stub.config import StubConfig
 from ledger_stub.relay import Relay, producer_config
 from ledger_stub.risk_client import ApiConflict, Decided, NoDecision, RiskClient
 from ledger_stub.transfers import (
+    REPLAY_TIME_HEADER,
     InvalidTransferError,
     TransferRequest,
     UnreadableTransferError,
     in_record_order,
+    parse_replay_time,
     parse_transfer,
 )
 from risk import settings
 from risk.checks import check_kafka_topic, check_postgres, health_response, metrics_response
 from risk.deadlines import DeadlineExceededError, within
-from risk.problems import bad_request, problem
+from risk.problems import FieldError, bad_request, problem
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 # httpx logs every request at INFO: one line per decision call, which the outcome counters cover.
@@ -90,6 +97,11 @@ def create_app(config: StubConfig | None = None) -> FastAPI:
         risk = RiskClient(cfg.risk_url, cfg.risk_timeout_s, cfg.on_timeout_default)
         relay = Relay(pool, producer, cfg.relay_poll_s, cfg.relay_batch)
         relay_task = asyncio.create_task(relay.run())
+        if cfg.replay:
+            log.warning(
+                "replay mode: every decided transfer is posted at its X-Replay-Time (D40u, D40v)"
+            )
+        app.state.replay = cfg.replay
         app.state.database_url = cfg.database_url
         app.state.kafka_admin = AdminClient({"bootstrap.servers": cfg.kafka_bootstrap})
         app.state.pool = pool
@@ -109,6 +121,15 @@ def create_app(config: StubConfig | None = None) -> FastAPI:
 
     @app.post("/transfers")
     async def transfers(request: Request) -> Response:
+        replay_time: datetime | None = None
+        header_errors: list[FieldError] = []
+        # Replay mode reads the transfer's time from the replay; normal mode, like tally, never
+        # looks at the header (design.md 1.3, D52g).
+        if request.app.state.replay:
+            try:
+                replay_time = parse_replay_time(request.headers.get(REPLAY_TIME_HEADER))
+            except ValueError as exc:
+                header_errors.append(FieldError(REPLAY_TIME_HEADER, str(exc)))
         try:
             key, transfer = parse_transfer(
                 request.headers.get("idempotency-key"), await request.body()
@@ -118,8 +139,14 @@ def create_app(config: StubConfig | None = None) -> FastAPI:
             return problem(400, "Failed to read request", instance=INSTANCE)
         except InvalidTransferError as exc:
             TRANSFERS.labels("invalid").inc()
-            return bad_request("Invalid request content.", exc.errors, instance=INSTANCE)
+            errors = exc.errors + header_errors
+            return bad_request("Invalid request content.", errors, instance=INSTANCE)
+        if header_errors:
+            TRANSFERS.labels("invalid").inc()
+            return bad_request("Invalid request content.", header_errors, instance=INSTANCE)
         try:
+            if replay_time is not None:
+                return await post_replayed(request.app, key, transfer, replay_time)
             return await post_transfer(request.app, key, transfer)
         except (psycopg.Error, DeadlineExceededError):
             log.warning("database unavailable or too slow; answering 503", exc_info=True)
@@ -162,6 +189,7 @@ async def post(
     transfer: TransferRequest,
     risk_check: str,
     decision: Decided | None,
+    created_at: datetime | None = None,
 ) -> Response:
     outcome = await within(
         store.post(
@@ -171,6 +199,7 @@ async def post(
             request=transfer,
             risk_check=risk_check,
             decision_id=decision.decision_id if decision else None,
+            created_at=created_at,
         ),
         DATABASE_STEP_S,
     )
@@ -220,9 +249,7 @@ async def post_transfer(app: FastAPI, key: str, transfer: TransferRequest) -> Re
                 instance=INSTANCE,
             )
         case ApiConflict():
-            RISK_CALLS.labels("conflict").inc()
-            TRANSFERS.labels("conflict").inc()
-            return problem(409, KEY_REUSED, instance=INSTANCE)
+            return api_conflict()
         case NoDecision(reason=reason):
             RISK_CALLS.labels(reason).inc()
             answer = risk.backup_answer
@@ -238,16 +265,65 @@ async def post_transfer(app: FastAPI, key: str, transfer: TransferRequest) -> Re
                 return await post(app, key, request_hash, transfer, "fallback", None)
             # A backup refusal is a 503, not a 403: nothing was decided, and a retry with the
             # same key asks again (D6).
-            TRANSFERS.labels("risk_unavailable").inc()
-            return problem(
-                503,
-                "The risk check did not answer in time; try again. A transfer retried with the "
-                "same Idempotency-Key moves money at most once.",
-                type_="/problems/risk-unavailable",
-                title="Risk check unavailable",
-                instance=INSTANCE,
-            )
+            return risk_unavailable()
     raise AssertionError(f"unhandled decision result {result!r}")
+
+
+async def post_replayed(
+    app: FastAPI, key: str, transfer: TransferRequest, replay_time: datetime
+) -> Response:
+    """Replay mode (design.md 1.3): the replay's time is the transfer's requestedAt, createdAt
+    and effectiveAt (D40v), and every decided transfer is posted, held and blocked ones too,
+    because PaySim's transfers happened (D40u). A transfer without a decision is never posted,
+    whatever the backup answer, so the replay never logs a transfer without its features."""
+    transfer = replace(transfer, effective_at=replay_time)
+    request_hash = transfer.request_hash()
+    saved = await within(store.saved(app.state.pool, key), DATABASE_STEP_S)
+    if saved is not None:
+        return replay(saved, request_hash)
+
+    result = await app.state.risk.decide(
+        key,
+        transfer.from_account_id,
+        transfer.to_account_id,
+        transfer.amount,
+        transfer.currency,
+        requested_at=replay_time,
+    )
+    match result:
+        case Decided(decision=decision):
+            RISK_CALLS.labels(decision).inc()
+            return await post(
+                app, key, request_hash, transfer, "decided", result, created_at=replay_time
+            )
+        case ApiConflict():
+            return api_conflict()
+        case NoDecision(reason=reason):
+            RISK_CALLS.labels(reason).inc()
+            log.warning(
+                "replay mode: no decision, outcome=%s; not posted idempotencyKey=%s", reason, key
+            )
+            return risk_unavailable()
+    raise AssertionError(f"unhandled decision result {result!r}")
+
+
+def api_conflict() -> Response:
+    """The decision API answered 409: the key was decided for a different transfer (D11)."""
+    RISK_CALLS.labels("conflict").inc()
+    TRANSFERS.labels("conflict").inc()
+    return problem(409, KEY_REUSED, instance=INSTANCE)
+
+
+def risk_unavailable() -> Response:
+    TRANSFERS.labels("risk_unavailable").inc()
+    return problem(
+        503,
+        "The risk check did not answer in time; try again. A transfer retried with the "
+        "same Idempotency-Key moves money at most once.",
+        type_="/problems/risk-unavailable",
+        title="Risk check unavailable",
+        instance=INSTANCE,
+    )
 
 
 app = create_app()

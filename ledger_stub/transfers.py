@@ -16,9 +16,11 @@ from typing import Any
 
 from risk.formats import CANONICAL_UUID, CURRENCY, IDEMPOTENCY_KEY, MAX_AMOUNT
 from risk.problems import FieldError
-from risk.timestamps import format_instant, parse_offset_timestamp
+from risk.timestamps import format_instant, parse_offset_timestamp, truncate_to_ms
 
 MAX_DESCRIPTION = 500
+# Replay mode only (design.md 1.3): the transfer's time, from the replay.
+REPLAY_TIME_HEADER = "X-Replay-Time"
 
 # JournalEntry's and JournalLine's record components, in order.
 ENTRY_FIELDS = (
@@ -142,6 +144,14 @@ def parse_transfer(key: str | None, body: bytes) -> tuple[str, TransferRequest]:
         description=description,
         effective_at=effective_at,
     )
+
+
+def parse_replay_time(value: str | None) -> datetime:
+    """X-Replay-Time (D52g): ISO-8601 with a Z or an offset, as UTC, truncated to the millisecond
+    like every time the features read (design.md 3.1)."""
+    if value is None:
+        raise ValueError("is required in replay mode")
+    return truncate_to_ms(parse_offset_timestamp(value))
 
 
 def transfer_entry(

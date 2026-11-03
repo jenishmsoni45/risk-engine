@@ -106,7 +106,10 @@ class RiskClient:
         to_account_id: uuid.UUID,
         amount: int,
         currency: str,
+        requested_at: datetime | None = None,
     ) -> RiskResult:
+        """Asks for a decision. `requestedAt` is tally's clock just before the call (3.1), or the
+        replay's time in replay mode (D40v)."""
         body = json.dumps(
             {
                 "requestId": request_id,
@@ -114,8 +117,7 @@ class RiskClient:
                 "toAccountId": str(to_account_id),
                 "amount": amount,
                 "currency": currency,
-                # tally's clock just before the call (3.1).
-                "requestedAt": format_instant(datetime.now(UTC)),
+                "requestedAt": format_instant(requested_at or datetime.now(UTC)),
             }
         ).encode()
         if self.in_flight >= self.max_in_flight:
