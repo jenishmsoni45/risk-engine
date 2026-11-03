@@ -498,6 +498,13 @@ Choices made at the start of Phase 6, within D32, D33, D36, D37, D40p, D40u and 
 | i | Dependencies | none added: the loader, the profile and the offline pipeline use Python's own csv, decimal and uuid modules | Phase 6 trains nothing; pandas (D40s) waits until a phase needs it |
 | j | The profile's report | `ml/reports/paysim_profile.md`, written by the profile script, naming the CSV's SHA-256 | a committed report, traceable to one file and one script (D29) |
 
+### D53. The burst test can't promise one attempt (2026-11-03)
+
+- Found while fixing the burst test (D51.3): design.md section 4 lets an insert commit after the 60 ms deadline has cut its request off. That request answers 503 and records no attempt (3.3 records one only after a 200 for a new decision). When the whole burst misses the deadline, the one row can therefore exist with no attempt, and the follow-up request only replays it. "Exactly one attempt" can fail in exactly the case D51.3 set out to handle.
+- Options: assert at most one attempt; also let a replay re-record its stored attempt, a change to design.md 3.3; leave the test as it was.
+- Answer: **at most one attempt** (owner). This replaces "and one attempt" in D51.3's answer; the rest of D51.3 stands. The burst test keeps exactly one row and the same decision in every 200. `tests/integration/test_attempts.py` still checks that a new decision answered 200 adds exactly one attempt, and that 8 concurrent duplicates add one.
+- Consequences: an insert that commits after the deadline leaves its attempt missing until `make rebuild-features` restores it. The Phase 6 PR lists this under Follow-ups.
+
 ## Open questions
 
 None. Every question from PLAN.md section 5 and every question found since is answered above. One answer is a deferral the owner chose: D30 (the AI-model rule) is confirmed at the start of Phase 7.

@@ -102,7 +102,7 @@ def test_a_flood_of_late_events_is_dropped_and_counted_and_changes_nothing() -> 
     assert features == oracle.features([], [], sender, receiver, 1, newest_ms + 1)
 
 
-def test_a_burst_of_one_request_id_gives_one_row_one_attempt_and_one_decision() -> None:
+def test_a_burst_of_one_request_id_gives_one_row_one_decision_and_no_second_attempt() -> None:
     body = decision_request(requestedAt=iso_ms(now_ms()))
 
     async def burst() -> list[httpx.Response]:
@@ -118,13 +118,19 @@ def test_a_burst_of_one_request_id_gives_one_row_one_attempt_and_one_decision() 
     # deadline, which is no decision at all (D22); never a second decision.
     statuses = [r.status_code for r in responses]
     assert set(statuses) <= {200, 503}, statuses
-    decided = [r.json() for r in responses if r.status_code == 200]
-    assert decided, "no request got a decision"
+    # On a busy runner every request of the burst may miss the deadline (D51.3, D53), so one
+    # more request, alone, must get the decision, new or stored, and it joins the comparison.
+    after = httpx.post(f"{API_URL}/v1/decisions", json=body, timeout=10)
+    assert after.status_code == 200, after.text
+    decided = [r.json() for r in responses if r.status_code == 200] + [after.json()]
     first = decided[0]
     for answer in decided:
         for name in ("decisionId", "decision", "ruleSet", "fired"):
             assert answer[name] == first[name]
     assert count("select count(*) from decisions where request_id = %s", (body["requestId"],)) == 1
-    # The one new decision recorded the one attempt; the replays added none.
+    # The replays added no attempt, so there is never a second (D53). There may be none: when
+    # the deadline cut off the request whose insert still committed (design.md section 4), it
+    # answered 503 without recording one, and the rebuild restores it (3.5). test_attempts.py
+    # checks that a new decision answered 200 adds exactly one.
     sender = uuid.UUID(body["fromAccountId"])
-    assert client(STACK_DB).zcard(attempt_key(sender)) == 1
+    assert client(STACK_DB).zcard(attempt_key(sender)) <= 1
