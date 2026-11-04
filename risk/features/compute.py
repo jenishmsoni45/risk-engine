@@ -96,8 +96,8 @@ def read_range(t_ms: int) -> tuple[int, int]:
 
 
 def hour_of_day(t_ms: int) -> int:
-    """D35's input beside the 31 features: the UTC hour of the decision time, 0 to 23. Here, so
-    that the offline pipeline and (Phase 8) the shadow scorer read it from one place."""
+    """The UTC hour of the decision time, 0 to 23 (D51.2). The offline pipeline gives it to the
+    PaySim profile's hour table; no model reads it (D54)."""
     return t_ms // HOUR_MS % 24
 
 

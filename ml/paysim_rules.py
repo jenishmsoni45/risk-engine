@@ -111,7 +111,8 @@ def training_sample(path: Path, source: ruleset.RuleSet) -> Sample:
         raise PaySimRulesError(f"{path.name} holds no transfer on a training day (D38)")
     # The training days come first, so their transfers are the first `training`.
     del values[training:], fraud[training:]
-    return Sample(names, values, fraud, last_day, days[training - 1])
+    last_training_day = max(d for d in range(last_day + 1) if part_of(d, last_day) == "train")
+    return Sample(names, values, fraud, last_day, last_training_day)
 
 
 def stopped(

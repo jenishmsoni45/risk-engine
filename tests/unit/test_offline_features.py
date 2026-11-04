@@ -1,6 +1,6 @@
 """The offline pipeline (design.md section 8) against the brute-force oracle (tests/oracle.py),
 which shares no code with risk/features/: every transfer's features at its own time, from the
-transfers before it as ledger events and as attempts, and the hour of day (D35, D51.2).
+transfers before it as ledger events and as attempts, and the hour of day (D51.2).
 """
 
 from __future__ import annotations

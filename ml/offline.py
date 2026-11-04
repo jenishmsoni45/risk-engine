@@ -34,7 +34,7 @@ from risk.timestamps import EPOCH
 class OfflineRow:
     transfer: Transfer
     features: dict[str, int]  # the 31 of design.md 1.5, in FEATURE_NAMES order
-    hour: int  # D35's hour of day, from risk/features/
+    hour: int  # the hour of day (D51.2), from risk/features/; for the profile, not a model (D54)
 
 
 def ledger_event(transfer: Transfer) -> LedgerEvent:
