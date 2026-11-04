@@ -507,6 +507,25 @@ Choices made at the start of Phase 6, within D32, D33, D36, D37, D40p, D40u and 
 - Answer: **at most one attempt** (owner). This replaces "and one attempt" in D51.3's answer; the rest of D51.3 stands. The burst test keeps exactly one row and the same decision in every 200. `tests/integration/test_attempts.py` still checks that a new decision answered 200 adds exactly one attempt, and that 8 concurrent duplicates add one.
 - Consequences: an insert that commits after the deadline leaves its attempt missing until `make rebuild-features` restores it. The Phase 6 PR lists this under Follow-ups.
 
+### D54. What the PaySim profile settled (2026-11-04)
+
+Phase 6's stop-and-ask, answered after `make profile` wrote `ml/reports/paysim_profile.md` from the owner's CSV (SHA-256 `16910f90577b0d981bf8ff289714510bb89bc71bff7d3f220f024e287e4eea6b`). The owner approved the doc changes below before they were made.
+
+1. **The sample (D32).** TRANSFER and CASH_OUT over all days load 2,770,393 transfers, 8,197 of them fraud. Senders almost never repeat (2,766,838 of 2,768,614 senders send once), so the sender-side feature families are almost always empty and only the receiver's inflows (`dest_in`) often have members.
+   - Options: confirm as planned; re-profile with every type.
+   - Answer: **confirm as planned** (owner). The model keeps all 31 features: empty ones cost the model nothing and are what the live guard computes. The model card names the sparse sender side as a limitation.
+2. **The starter rules on PaySim.** Rule set v1 would hold 97.15% of the loaded transfers, nearly all through `large_transfer`, since its thresholds are CAD cents (D20) and PaySim's amounts are larger. A backtest at the rules' own hold rate (D40q) would compare nothing.
+   - Options: add a PaySim rule set, rescaled to hold about 1%, in this PR; the same in Phase 7; keep v1 only.
+   - Answer: **add a PaySim rule set in this PR** (owner). `ml/rules/paysim.yaml`, version 2, written by `make paysim-rules`: D20's six rules, `default: allow`, `on_timeout: hold`, with every threshold on a cent feature (`amount` and the sums) multiplied by one integer factor and every count threshold unchanged. The factor is the smallest integer at which the set holds or blocks at most 1% of the training days' transfers (D34, D38); a hold and a block both stop the money, so both count. Only the backtest reads the file; the service still loads `risk/rules/ruleset.yaml`. Its report is `ml/reports/paysim_rules.md`.
+   - Why: PaySim's currency is unnamed, so one factor changes the scale of the money and nothing else. Choosing it on the training days keeps the test days unseen.
+   - Consequences: on PaySim the set acts mostly as "hold the largest amounts", because the sender-side rules can hardly fire (point 1). D38's day split is built now, in `ml/split.py`, and Phase 7 reuses it.
+3. **The hour of day as a model input (D35).** The profile's hour table shows fraud spread almost evenly over the 24 hours while other transfers nearly stop at night, so the hour alone would separate much of the fraud. That is how PaySim simulates fraud, not something a real guard could count on.
+   - Options: drop the hour; keep it and name it in the model card; train with and without it and report both.
+   - Answer: **drop the hour** (owner). This replaces "plus the hour of day of `requestedAt`" in D35's answer; the rest of D35 stands. The model's inputs are the 31 features of D19.
+   - Why: the same reason D35 gives for leaving out the balance columns: it makes PaySim artificially easy.
+   - Consequences: the hour stays in the offline pipeline, computed in `risk/features/compute.py` (D52l), for the profile's hour table (D51.2); no model reads it.
+- Doc changes: design.md section 8 (offline pipeline, a new PaySim rule set entry, shadow, backtest); requirements.md US13.2 and US15.1; architecture.md section 6; phases.md Phase 6 scope and a new criterion 10, and Phase 7 criterion 2.
+
 ## Open questions
 
 None. Every question from PLAN.md section 5 and every question found since is answered above. One answer is a deferral the owner chose: D30 (the AI-model rule) is confirmed at the start of Phase 7.

@@ -253,7 +253,7 @@ flowchart LR
     offline --> train["train: LightGBM, split by days (D38),<br/>threshold at 1% held (D34)"]
     train --> card["model file + model card"]
     card --> apis
-    offline --> backtest["backtest CLI: rules vs model (D40q)"]
+    offline --> backtest["backtest CLI: PaySim rules vs model (D40q, D54)"]
     log --> parity{"I7: logged online =<br/>offline recompute"}
     offline --> parity
 ```

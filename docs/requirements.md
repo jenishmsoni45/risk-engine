@@ -92,7 +92,7 @@ Each criterion is checked by a test or a script named in [phases.md](phases.md).
 
 **US13. Train a model honestly.** As an ML engineer, I want a model trained without leakage and thresholded by review capacity, so that its numbers mean something.
 1. Phase 7 starts only after the owner confirms that training LightGBM here is allowed under CLAUDE.md's AI-model rule (D30).
-2. The model uses only D35's inputs.
+2. The model uses only the 31 features: D35's inputs without the hour of day (D54).
 3. The split is by days: test on the last 7, set the threshold on the 2 before, train on the rest (D38).
 4. The threshold holds 1% of transfers on the threshold days (D34).
 5. One command rebuilds the model card: data, split, inputs, threshold, PR-AUC, recall and fraud value caught at the 1% hold rate, false-positive rate, and limitations.
@@ -103,7 +103,7 @@ Each criterion is checked by a test or a script named in [phases.md](phases.md).
 3. With shadow on, p99 stays within 50 ms at every bench rate below the one where 2a's p99 crossed 50 ms, and the model's added latency is published.
 
 **US15. Backtest rules against the model.** As a risk analyst, I want rules and model compared on the same test days at the same hold rate, so that "better" means better.
-1. The backtest CLI reports, on the test days, the rules at their own hold rate against the model at that same rate, plus the model at 1%, with recall, fraud value caught and false-positive rate for each (D40q).
+1. The backtest CLI reports, on the test days, the PaySim rule set (D54) at its own hold rate against the model at that same rate, plus the model at 1%, with recall, fraud value caught and false-positive rate for each (D40q).
 
 ## 4. Non-functional requirements
 

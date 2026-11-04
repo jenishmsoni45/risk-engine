@@ -101,7 +101,7 @@ Phases 1 to 8 from PLAN.md section 6. Each phase is one PR, started only when th
 
 ## Phase 6 · Replay (Feb 1–7)
 
-**Scope.** The PaySim profile script (D32), loader (D33, D40p), the stub's replay mode (D40u, D40v), the replay CLI with its wait (D36), the offline pipeline on the shared module, the generated PaySim-format data for CI (D37), `make parity`. The UTC instant that PaySim's first step maps to is chosen here and recorded in decisions.md, since the hour of day (D35) depends on it.
+**Scope.** The PaySim profile script (D32), loader (D33, D40p), the stub's replay mode (D40u, D40v), the replay CLI with its wait (D36), the offline pipeline on the shared module, the generated PaySim-format data for CI (D37), `make parity`, the PaySim rule set (D54). The UTC instant that PaySim's first step maps to is chosen here and recorded in decisions.md, since the hour of day (D35) depends on it.
 
 **Stop and ask.** After the profile runs, the owner confirms the sample (D32). The starter thresholds are CAD cents (D20) and PaySim's amounts are in an unnamed currency, so the profile also reports what share of transfers the starter rules would hold; if that share makes the rules-versus-model comparison meaningless, the owner decides whether to add a PaySim rule set version before Phase 7.
 
@@ -115,6 +115,7 @@ Phases 1 to 8 from PLAN.md section 6. Each phase is one PR, started only when th
 7. `make parity` on about 10k real transfers gives exact equality; its output is recorded in the PR.
 8. The offline pipeline and the decision API compute features with the same function from `risk/features/`. (`tests/unit/test_one_feature_module.py`, an identity check on the imported function)
 9. Nothing under `data/` is tracked. (`tests/unit/test_repo_hygiene.py`)
+10. `make paysim-rules` writes `ml/rules/paysim.yaml` and its report in `ml/reports/`; the rule loader accepts the file; the scaling and the factor search are unit-tested on generated data. (`tests/unit/test_paysim_rules.py`)
 
 **Out of scope.** Training or loading a model.
 
@@ -124,7 +125,7 @@ Phases 1 to 8 from PLAN.md section 6. Each phase is one PR, started only when th
 
 **Acceptance criteria**
 1. Before any training code runs, the owner confirms that LightGBM trained here is allowed under CLAUDE.md's AI-model rule, recorded in decisions.md (D30).
-2. The model's input list is exactly the 31 features and the hour of day. (`tests/unit/test_model_inputs.py`)
+2. The model's input list is exactly the 31 features. (`tests/unit/test_model_inputs.py`)
 3. Every training day is before every threshold day, every threshold day before every test day, and no transfer is in two sets. (`tests/unit/test_split.py`)
 4. The threshold holds 1% of the threshold days' transfers, to within one transfer. (`tests/unit/test_threshold.py`)
 5. `make model` rebuilds the model file and the model card from the CSV, and two runs give the same metrics. (run by hand; card committed)
