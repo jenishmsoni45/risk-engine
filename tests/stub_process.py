@@ -1,8 +1,9 @@
-"""Runs the ledger stub in the test process, pointed at a fake decision API.
+"""Runs the ledger stub in the test process, pointed at a fake decision API or the stack's.
 
 The stub's code is the container's; only its settings differ. It uses the stack's Postgres and
-Kafka through their host ports, publishes at once (relay interval 0), and starts with a fresh
-memory of the backup answer, so each test controls what the stub has heard.
+Kafka through their host ports, publishes at once (relay interval 0) unless a test asks for a
+delay, and starts with a fresh memory of the backup answer, so each test controls what the stub
+has heard. `replay=True` runs it in replay mode (design.md 1.3), as STUB_REPLAY=1 does.
 """
 
 from __future__ import annotations
@@ -25,6 +26,8 @@ def running_stub(
     *,
     database_url: str | None = None,
     on_timeout_default: str = "hold",
+    replay: bool = False,
+    relay_poll_s: float = 0,
 ) -> Iterator[str]:
     """The base URL of a stub that runs until the block ends."""
     config = StubConfig(
@@ -33,8 +36,9 @@ def running_stub(
         risk_url=risk_url,
         risk_timeout_s=0.1,
         on_timeout_default=on_timeout_default,
-        relay_poll_s=0,
+        relay_poll_s=relay_poll_s,
         relay_batch=100,
+        replay=replay,
     )
     port = free_port()
     server = uvicorn.Server(

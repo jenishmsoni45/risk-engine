@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import Any
 
 from psycopg import AsyncConnection
@@ -68,8 +68,10 @@ async def post(
     request: TransferRequest,
     risk_check: str,
     decision_id: uuid.UUID | None,
+    created_at: datetime | None = None,
 ) -> Posted | Saved:
     """Posts the transfer: its key with the saved 201 and its outbox row, in one transaction.
+    `createdAt` is the transaction's start, as in tally, unless the replay gives the time (D40v).
 
     If a concurrent request with the same key committed first, nothing is written and that
     request's saved response comes back instead, to replay or answer 409, as tally's claim does.
@@ -81,7 +83,8 @@ async def post(
         row = await cursor.fetchone()
         if row is None:
             raise RuntimeError("select now() returned no row")
-        created_at, from_line, to_line = row
+        now, from_line, to_line = row
+        created_at = created_at or now
         entry_id = uuid.uuid4()
         entry = transfer_entry(
             entry_id=entry_id,

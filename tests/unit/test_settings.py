@@ -22,6 +22,7 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         "STUB_ON_TIMEOUT_DEFAULT",
         "STUB_RELAY_POLL_MS",
         "STUB_RELAY_BATCH",
+        "STUB_REPLAY",
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("DATABASE_URL", "postgresql://dummy@db/dummy")
@@ -67,6 +68,7 @@ def test_a_relay_interval_of_zero_is_allowed(monkeypatch: pytest.MonkeyPatch) ->
         ("STUB_RELAY_BATCH", "0"),
         ("STUB_ON_TIMEOUT_DEFAULT", "deny"),
         ("CONSUMER_START", "end"),
+        ("STUB_REPLAY", "yes"),
     ],
 )
 def test_a_bad_value_names_the_variable(

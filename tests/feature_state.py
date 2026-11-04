@@ -48,16 +48,25 @@ def sample(name: str, **labels: str) -> float:
 
 
 class FakeSource:
-    """Stands in for confluent_kafka.Consumer in the consumer's loop: hands out the batches
-    given, one per consume(), and records every other call."""
+    """Stands in for confluent_kafka.Consumer in the consumer's loop. Each batch given is what
+    has been fetched by the time of one poll: a consume() that waits (timeout other than 0) moves
+    on to the next batch once the current one is used up, and one that doesn't wait only takes
+    from the current batch, as librdkafka's local queue behaves. Records each consume()'s
+    arguments in `consumes` and every other call in `calls`."""
 
     def __init__(self, *batches: list[Message]) -> None:
         self.batches = list(batches)
+        self.fetched: list[Message] = []
+        self.consumes: list[tuple[int, float]] = []
         self.calls: list[tuple[str, object]] = []
         self.fail_commit = False
 
     def consume(self, num_messages: int = 1, timeout: float = -1) -> list[Message]:
-        return self.batches.pop(0) if self.batches else []
+        self.consumes.append((num_messages, timeout))
+        if not self.fetched and timeout != 0 and self.batches:
+            self.fetched = self.batches.pop(0)
+        taken, self.fetched = self.fetched[:num_messages], self.fetched[num_messages:]
+        return taken
 
     def seek(self, partition: TopicPartition) -> None:
         self.calls.append(("seek", (partition.partition, partition.offset)))

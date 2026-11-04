@@ -18,8 +18,10 @@ from confluent_kafka import KafkaError, KafkaException, Message, TopicPartition
 from risk.features import consumer
 from risk.features.compute import Movement
 from risk.features.consumer import (
+    BATCH_SIZE,
     FIRST_RETRY_S,
     MAX_RETRY_S,
+    POLL_TIMEOUT_S,
     BadEvents,
     FeatureConsumer,
     MessageHandler,
@@ -83,6 +85,31 @@ def test_offsets_are_committed_after_the_writes_they_cover() -> None:
     fc.poll()
     assert seen_at_commit == [[(0, 5), (1, 9), (0, 6)]]
     assert source.calls == [("commit", [(0, 7), (1, 10)])]
+
+
+def test_a_poll_waits_for_one_message_then_takes_what_is_fetched_without_waiting() -> None:
+    # D51.1: a lone event is applied as soon as it arrives, not after the poll timeout.
+    source = FakeSource([msg(0, 1), msg(1, 1), msg(0, 2)])
+    handler = ScriptedHandler()
+    FeatureConsumer(source, handler).poll()
+    assert source.consumes == [(1, POLL_TIMEOUT_S), (BATCH_SIZE - 1, 0)]
+    assert handler.handled == [(0, 1), (1, 1), (0, 2)]
+    assert source.calls == [("commit", [(0, 3), (1, 2)])]
+
+
+def test_a_poll_that_gets_nothing_asks_once() -> None:
+    source = FakeSource([])
+    FeatureConsumer(source, ScriptedHandler()).poll()
+    assert source.consumes == [(1, POLL_TIMEOUT_S)]
+    assert source.calls == []
+
+
+def test_a_busy_stream_comes_in_batches_of_at_most_batch_size() -> None:
+    source = FakeSource([msg(0, n) for n in range(BATCH_SIZE + 2)])
+    fc = FeatureConsumer(source, ScriptedHandler())
+    fc.poll()
+    fc.poll()
+    assert source.calls == [("commit", [(0, BATCH_SIZE)]), ("commit", [(0, BATCH_SIZE + 2)])]
 
 
 def test_every_outcome_moves_the_offset_on() -> None:
