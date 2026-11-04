@@ -16,7 +16,7 @@ THROWAWAY_PROJECTS := risk-engine-bench risk-engine-e2e risk-engine-parity
 PAYSIM_CSV ?= data/PS_20174392719_1491204439457_log.csv
 
 .PHONY: help sync up down test lint audit clean purge rebuild-features bench report check-readme e2e \
-	profile parity
+	profile paysim-rules parity
 
 help:
 	@echo "make up      start the stack and wait until every service is healthy"
@@ -30,6 +30,7 @@ help:
 	@echo "make check-readme   fail if README.md's bench tables differ from make report's"
 	@echo "make e2e     real tally (TALLY_DIR, default ~/Desktop/tally) against a throwaway stack"
 	@echo "make profile   profile PAYSIM_CSV into ml/reports/paysim_profile.md"
+	@echo "make paysim-rules   write ml/rules/paysim.yaml, D20's rules rescaled to PAYSIM_CSV (D54)"
 	@echo "make parity  replay PAYSIM_CSV's first 10,000 transfers on a throwaway stack; check I7"
 	@echo "make clean   remove this project's containers, volumes, network, image, .venv and caches"
 	@echo "make purge   make clean, then the pinned images no container uses and uv's cache"
@@ -74,6 +75,10 @@ e2e: sync
 # 2b (design.md section 8). The profile confirms the sample before Phase 7 (D32).
 profile: sync
 	uv run --locked python -m ml.profile --csv "$(PAYSIM_CSV)"
+
+# The rule set the backtest compares with the model (D54); the service never loads it.
+paysim-rules: sync
+	uv run --locked python -m ml.paysim_rules --csv "$(PAYSIM_CSV)"
 
 # I7 on real data (D36, D37): local only; needs the normal stack stopped (`make down`).
 parity: sync

@@ -1,0 +1,35 @@
+# The PaySim rule set (D54), written by `make paysim-rules`; don't edit it by hand.
+# D20's rules from risk/rules/ruleset.yaml, with every threshold on a cent feature
+# multiplied by 265: the smallest integer factor at which the set holds or
+# blocks at most 1% of the training days' transfers (D38) in
+# PS_20174392719_1491204439457_log.csv (SHA-256 16910f90577b0d981bf8ff289714510bb89bc71bff7d3f220f024e287e4eea6b).
+# Only the backtest reads this file (D40q); the service loads risk/rules/ruleset.yaml.
+version: 2
+default: allow
+on_timeout: hold
+rules:
+  - id: velocity_1m
+    action: hold
+    all:
+      - { feature: out_count_1m, op: ">=", value: 5 }
+  - id: attempt_burst_1m
+    action: block
+    all:
+      - { feature: attempt_count_1m, op: ">=", value: 10 }
+  - id: daily_outflow_24h
+    action: hold
+    all:
+      - { feature: out_sum_24h, op: ">=", value: 662500000 }
+  - id: large_transfer
+    action: hold
+    all:
+      - { feature: amount, op: ">=", value: 265000000 }
+  - id: dest_fan_in_1h
+    action: hold
+    all:
+      - { feature: dest_in_count_1h, op: ">=", value: 20 }
+  - id: pass_through_1h
+    action: hold
+    all:
+      - { feature: in_sum_1h, op: ">=", value: 53000000 }
+      - { feature: amount, op: ">=", value: 53000000 }
