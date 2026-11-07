@@ -16,6 +16,8 @@ from typing import Any
 import pytest
 
 from bench import report, run
+from ml.backtest import Line, Result, data
+from ml.metrics import AtThreshold
 from risk.features.compute import net_entry
 from risk.features.events import parse_event
 from risk.timestamps import epoch_ms
@@ -32,12 +34,15 @@ def summary(p50: float, p99: float, count: int, failed: float, dropped: int = 0)
     return {"metrics": metrics}
 
 
-def conditions(scenario: str, *, clean: bool = True, step: int = 180) -> dict[str, Any]:
+def conditions(
+    scenario: str, *, clean: bool = True, step: int = 180, model: str | None = "lgbm-test"
+) -> dict[str, Any]:
     return {
         "scenario": scenario,
         "git_commit": "0123456789abcdef",
         "git_clean": clean,
         "rule_set_version": 1,
+        "shadow_model": model,
         "host": {"cpu": "Test CPU", "cpus": 10, "memory_bytes": 16 * 1024**3, "os": "TestOS 1"},
         "docker": {"version": "29.0", "vm_cpus": 5, "vm_memory_bytes": 8 * 1024**3},
         "k6": "k6 v2.3.0 (commit/devel)",
@@ -72,6 +77,8 @@ def rate_step(
     )
 
 
+CROSSED = "p99 passed 50 ms"
+
 STUB_STACK: dict[str, Any] = {
     "stub_transfers": 9000,
     "stub_backup_answers": 9,
@@ -84,9 +91,23 @@ STUB_STACK: dict[str, Any] = {
 def results(tmp_path: Path) -> Path:
     folder = tmp_path / "2026-11-26"
     folder.mkdir()
+    write(folder, "conditions-direct-off.json", conditions("direct-off", model=None))
+    rate_step(folder, "direct-off", 50, summary(1.5, 5.0, 9000, 0.0), shadow_scored=0)
+    rate_step(folder, "direct-off", 100, summary(1.75, 7.0, 18000, 0.0), shadow_scored=0)
+    rate_step(folder, "direct-off", 200, summary(2.0, 70.0, 36000, 0.0), CROSSED, shadow_scored=0)
     write(folder, "conditions-direct.json", conditions("direct"))
-    rate_step(folder, "direct", 50, summary(2.0, 6.0, 9000, 0.0))
-    rate_step(folder, "direct", 100, summary(2.5, 61.25, 18000, 0.0), "p99 passed 50 ms")
+    rate_step(
+        folder, "direct", 50, summary(2.0, 6.0, 9000, 0.0), decisions=9000, shadow_scored=8991
+    )
+    rate_step(
+        folder,
+        "direct",
+        100,
+        summary(2.5, 61.25, 18000, 0.0),
+        CROSSED,
+        decisions=18000,
+        shadow_scored=18000,
+    )
     write(folder, "conditions-stub.json", conditions("stub"))
     rate_step(folder, "stub", 50, summary(5.0, 9.0, 9000, 0.001), **STUB_STACK)
     rate_step(
@@ -159,7 +180,128 @@ def test_a_preloaded_event_adds_only_to_the_hot_accounts_incoming_window() -> No
 def test_the_conditions_are_listed(results: Path) -> None:
     block, _ = report.render(results)
     assert "Test CPU, 10 cores, 16 GiB" in block
-    assert "commit `0123456`, rule set v1; k6 v2.3.0; steps of 180 s." in block
+    assert (
+        "`direct`: Test CPU, 10 cores, 16 GiB, TestOS 1; Docker 29.0, its VM 5 CPUs and 8.0 GiB; "
+        "commit `0123456`, rule set v1, shadow model `lgbm-test`; k6 v2.3.0; steps of 180 s."
+    ) in block
+    assert "rule set v1, shadow off; k6 v2.3.0" in block
+
+
+def test_results_from_before_shadow_scoring_read_as_off(results: Path) -> None:
+    document = conditions("direct")
+    del document["shadow_model"]
+    write(results, "conditions-direct.json", document)
+    assert "rule set v1, shadow off; k6" in report.render(results)[0]
+
+
+def test_the_model_off_run_stays_out_of_the_direct_table(results: Path) -> None:
+    block, _ = report.render(results)
+    assert "| 200 | 36000 |" not in block
+    assert "| 50 | 9000 | 2.0 | 6.0 | 0.00% | 0 |" in block
+    assert "| 50 | 9000 | 1.5 | 5.0 |" not in block
+
+
+# --- The 2b block (D57.2, D57.4; Phase 8, criteria 3 and 4) -------------------------------------
+
+
+def backtest_file(folder: Path) -> Path:
+    def line(who: str, rate: str, threshold: float | None, held: int, caught: int) -> Line:
+        return Line(
+            who,
+            rate,
+            threshold,
+            AtThreshold(
+                transfers=1000,
+                held=held,
+                fraud=40,
+                fraud_held=caught,
+                fraud_cents=4_000_000,
+                fraud_cents_held=caught * 100_000,
+                not_fraud=960,
+                not_fraud_held=held - caught,
+            ),
+        )
+
+    result = Result(
+        csv_name="paysim.csv",
+        csv_sha256="ab" * 32,
+        rules_file="ml/rules/paysim.yaml",
+        rules_version=2,
+        rules_sha256="cd" * 32,
+        model_name="lgbm-test",
+        test_days=(24, 30),
+        lines=(
+            line("rules", "own", None, 20, 4),
+            line("model", "rules", 0.4, 20, 9),
+            line("model", "1%", 0.6, 10, 6),
+        ),
+    )
+    path = folder / "backtest.json"
+    path.write_text(json.dumps(data(result)))
+    return path
+
+
+def test_the_2b_block_holds_the_backtest_and_the_shadow_cost(results: Path, tmp_path: Path) -> None:
+    block = report.render_2b(results, backtest_file(tmp_path))
+    assert block.startswith(report.START_2B)
+    assert block.endswith(report.END_2B)
+    assert "Days 24 to 30 of `paysim.csv`: 1000 transfers, of which fraud 40" in block
+    assert (
+        "| PaySim rules (v2), at their own hold rate | 2.00% (20) | 10.00% (4 of 40) | 10.00% "
+        "| 1.67% (16) |"
+    ) in block
+    assert "| model `lgbm-test`, at the rules' hold rate | 2.00% (20) | 22.50% (9 of 40) |" in block
+    # Added latency is on minus off, at each rate both runs reached; Scored is the on run's.
+    assert "| 50 | 1.5 | 2.0 | +0.5 | 5.0 | 6.0 | +1.0 | 99.90% |" in block
+    assert "| 100 | 1.8 | 2.5 | +0.8 | 7.0 | 61.2 | +54.2 | 100.00% |" in block
+    assert "| 200 |" not in block
+
+
+def test_the_budget_check_names_a_crossing_below_the_model_off_one(results: Path) -> None:
+    """Off crosses at 200; on crosses at 100, below it: criterion 4 fails, and says where."""
+    block = report.render_2b(results, Path("missing.json"))
+    assert (
+        "With the model off, p99 first passes 50 ms at **200 requests a second**. With it on, "
+        "p99 passes 50 ms at 100 requests a second, below that rate."
+    ) in block
+    assert "No backtest yet: run `make backtest`." in block
+
+
+def test_the_budget_check_passes_when_p99_holds_below_the_crossing(results: Path) -> None:
+    rate_step(
+        results,
+        "direct",
+        100,
+        summary(2.5, 9.0, 18000, 0.0),
+        decisions=18000,
+        shadow_scored=18000,
+    )
+    rate_step(results, "direct", 200, summary(3.0, 80.0, 36000, 0.0), CROSSED)
+    block = report.render_2b(results, Path("missing.json"))
+    assert (
+        "With it on, p99 stays within 50 ms at every rate below that: 50 to 100 requests a "
+        "second." in block
+    )
+
+
+def test_the_budget_check_says_when_a_rate_below_wasnt_measured(results: Path) -> None:
+    """The model-on run stops at 100 for errors, while the model-off run only crosses at 400: 200
+    was never measured with the model on, so the check can't pass."""
+    rate_step(results, "direct", 100, summary(2.5, 9.0, 18000, 0.02), "errors passed 1%")
+    rate_step(results, "direct-off", 400, summary(2.0, 80.0, 72000, 0.0), CROSSED)
+    rate_step(results, "direct-off", 200, summary(2.0, 9.0, 36000, 0.0))
+    block = report.render_2b(results, Path("missing.json"))
+    assert (
+        "With it on, p99 wasn't measured at 200 requests a second: The run stopped at 100 "
+        "requests a second because errors passed 1%" in block
+    )
+    assert "With it on, p99 stays within 50 ms" not in block
+
+
+def test_without_both_runs_the_2b_block_says_so(results: Path) -> None:
+    (results / "conditions-direct-off.json").unlink()
+    block = report.render_2b(results, Path("missing.json"))
+    assert "No run with the model off and on in these results: run `make bench`." in block
 
 
 @pytest.mark.parametrize(
@@ -183,20 +325,39 @@ def test_results_from_a_dirty_tree_or_short_steps_never_go_in_the_readme(
 
 def test_check_passes_after_write_and_fails_after_an_edit(results: Path, tmp_path: Path) -> None:
     readme = tmp_path / "README.md"
-    readme.write_text(f"# Title\n\n{report.START}\nold\n{report.END}\n\nafter\n")
-    assert report.main(["--results", str(results), "--write", str(readme)]) == 0
+    readme.write_text(
+        f"# Title\n\n{report.START}\nold\n{report.END}\n\nmiddle\n\n"
+        f"{report.START_2B}\nold\n{report.END_2B}\n\nafter\n"
+    )
+    paths = ["--results", str(results), "--backtest", str(backtest_file(tmp_path))]
+    assert report.main([*paths, "--write", str(readme)]) == 0
     text = readme.read_text()
     assert text.startswith("# Title\n\n")
+    assert "\n\nmiddle\n\n" in text
     assert text.endswith("\n\nafter\n")
-    assert report.main(["--results", str(results), "--check", str(readme)]) == 0
+    assert "| 9 of 40" not in text.split(report.START_2B)[0]
+    assert "22.50% (9 of 40)" in text.split(report.START_2B)[1]
+    assert report.main([*paths, "--check", str(readme)]) == 0
 
-    readme.write_text(text.replace("| 2.0 | 6.0 |", "| 2.0 | 5.0 |"))
-    assert report.main(["--results", str(results), "--check", str(readme)]) == 1
+    for edit in (("| 2.0 | 6.0 |", "| 2.0 | 5.0 |"), ("22.50%", "25.00%")):
+        readme.write_text(text.replace(*edit))
+        assert report.main([*paths, "--check", str(readme)]) == 1
 
 
-def test_a_readme_without_one_block_is_refused(results: Path, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "text",
+    [
+        "no markers\n",
+        f"{report.START}\n{report.END}\n",
+        f"{report.START}\n{report.END}\n{report.START_2B}\n{report.END_2B}\n{report.START_2B}\n",
+    ],
+    ids=["none", "no 2b block", "two 2b starts"],
+)
+def test_a_readme_without_exactly_one_of_each_block_is_refused(
+    results: Path, tmp_path: Path, text: str
+) -> None:
     readme = tmp_path / "README.md"
-    readme.write_text("no markers\n")
+    readme.write_text(text)
     assert report.main(["--results", str(results), "--check", str(readme)]) == 1
 
 
