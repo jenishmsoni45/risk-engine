@@ -174,6 +174,19 @@ services:
       <<: *http-healthcheck
       test: ["CMD", "python", "-c", "import sys, urllib.request; urllib.request.urlopen(sys.argv[1], timeout=4)", "http://127.0.0.1:8001/health"]
 
+  # make model (D56a): trains in this image, the only place LightGBM runs (D51.4). Its profile
+  # keeps `make up` from starting it; `docker compose run model` still does. It needs no network.
+  # The folders it reads and writes are mounted by the command that runs it (the Makefile, or a
+  # test), so Compose never creates a missing data/ on the host.
+  model:
+    image: risk-engine:local
+    build:
+      context: .
+    profiles: ["model"]
+    network_mode: none
+    entrypoint: ["python", "-m", "ml.train"]
+    restart: "no"
+
 volumes:
   postgres-data:
   kafka-data:
