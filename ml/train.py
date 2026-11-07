@@ -205,6 +205,11 @@ def _days(summary: SetSummary) -> str:
     return f"{summary.first_day} to {summary.last_day}"
 
 
+def _per_day(summary: SetSummary) -> int:
+    """Transfers per day over the set's days, rounded down."""
+    return summary.transfers // (summary.last_day - summary.first_day + 1)
+
+
 def _threshold_lines(result: Result) -> list[str]:
     on = result.sets["threshold"].transfers
     lines = [
@@ -264,9 +269,9 @@ def card(result: Result, model_dir: Path = MODEL_DIR) -> str:
         "scored once, for this card.",
         "",
         *table(
-            ("set", "days", "transfers", "fraud", "fraud share"),
+            ("set", "days", "transfers", "per day", "fraud", "fraud share"),
             (
-                (part, _days(s), s.transfers, s.fraud, share(s.fraud, s.transfers))
+                (part, _days(s), s.transfers, _per_day(s), s.fraud, share(s.fraud, s.transfers))
                 for part, s in result.sets.items()
             ),
         ),
@@ -329,8 +334,11 @@ def card(result: Result, model_dir: Path = MODEL_DIR) -> str:
         "design: those columns make PaySim artificially easy.",
         "- Amounts are PaySim's unnamed currency read as CAD cents (D40p), so its splits on "
         "amounts and sums mean nothing for real CAD transfers.",
-        "- The threshold is set on two days, so the share it holds on the test days differs "
-        "from 1% (above).",
+        "- The split is by day (D38), and PaySim's days differ: the split table gives each "
+        "set's transfers per day and fraud share. Where those differ from the training days', "
+        "the test days measure the model on traffic unlike most of what it learned from, and the "
+        "threshold, set on two days, holds a different share of the test days than of its own "
+        "(above).",
         "- Its scores rank transfers; they are not calibrated probabilities, and only their "
         "order is used.",
         "- Fixed settings and one training run, with no search, retraining or drift handling "

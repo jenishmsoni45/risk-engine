@@ -68,7 +68,9 @@ def test_the_card_states_what_criterion_6_asks(csv: Path, tmp_path: Path) -> Non
         "## Data",
         result.csv_sha256,
         "## Split (D38)",
-        "| train | 0 to 2 |",
+        "| set | days | transfers | per day | fraud | fraud share |",
+        f"| train | 0 to 2 | {result.sets['train'].transfers} | "
+        f"{result.sets['train'].transfers // 3} |",
         "| threshold | 3 to 4 |",
         "| test | 5 to 11 |",
         "## Inputs (D35, D54)",
