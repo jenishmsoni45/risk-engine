@@ -565,6 +565,47 @@ Choices made within D34, D38, D51.4, D54 and D55, shown to the owner with D55's 
 | e | Metrics on the test days | the threshold from the threshold days, unchanged; the card also gives the share it holds on the test days. PR-AUC is average precision, computed in this repo with numpy | the test days stay unseen until scored; no further library |
 | f | Tests | no test on the Mac imports LightGBM. One integration test trains twice on generated data inside the image and checks that the two model files are identical | every test runs on the Mac and in CI, none skipped, and determinism is checked in CI |
 
+### D57. Phase 8's opening questions (2026-11-07)
+
+Five questions the docs didn't settle, asked before any Phase 8 code.
+
+1. **A slow model.** D39 scores in the request, before the row is stored, under the 60 ms deadline (design.md section 4). A model slow enough would push the decision past the deadline into a 503, so the model would change what the caller gets, which I8 forbids.
+   - Options: a 10 ms limit, with the model scored on its own worker thread; a 5 ms limit; no limit, scoring inline, which drops I8's slow-model case (a change to design.md).
+   - Answer: **a 10 ms limit** (owner). Scoring runs on one worker thread of the API; past 10 ms the row stores no score, the timeout is counted, and the decision goes on. A request whose wait has ended is dropped from the thread's queue before it runs, so a slow model can't pile up work. The limit is `SHADOW_TIMEOUT_MS`, default 10, in design.md 1.6.
+   - Consequences: a decision waits at most 10 ms for the model, inside its 60 ms deadline.
+2. **What the bench runs.** Phase 8 asks for the bench with shadow off and on, and for p99 within 50 ms with shadow on at every rate below the one where 2a's p99 crossed 50 ms. The committed results are from 2026-11-03, before D51.1 changed the consumer's loop, which D51.1 left for Phase 8's bench to measure.
+   - Options: every scenario again in one session on the phase's final commit (direct with shadow off and on, then stub and hot with shadow on); direct only, off and on, with README keeping the 2026-11-03 stub and hot tables; direct with shadow on only, compared with the 2026-11-03 run.
+   - Answer: **every scenario again, in one session** (owner). The shadow-off direct run is the baseline: the rate where its p99 first passes 50 ms is "the one where 2a's p99 crossed 50 ms" in Phase 8's criterion 4, and the model's added latency is shadow on minus shadow off at each rate, from the report script. All of README's tables then come from one run on one commit. design.md 12 now says so.
+3. **"The model at 1%" in the backtest** (D40q).
+   - Options: the test days' own 1% line; the threshold in `model.json`, set on the threshold days; both.
+   - Answer: **the test days' own 1% line** (owner): of the test days' n transfers, the model holds those scoring at or above the lowest score at which at most ⌊n / 100⌋ do, D55.3's rule, the same method that matches the rules' own hold rate. The model card already reports the shipped threshold on the test days.
+4. **How README's 2b numbers come from a script** (D29).
+   - Options: a block written by `make report` from the backtest's data file and the bench results, checked by `make check-readme` in CI; links to the reports, quoting no numbers.
+   - Answer: **a block written by a script** (owner). The backtest writes `ml/reports/backtest.json` beside its report; `make report` writes README's 2b block from it and from the bench results, and `make check-readme` fails if the block differs.
+5. **Shadow on by default.**
+   - Options: on, the API loading the committed model unless `SHADOW_MODEL_DIR` is empty; off unless set.
+   - Answer: **on by default** (owner). `make up`, CI and every test run with the committed model; `SHADOW_MODEL_DIR` set to empty turns shadow off, as the bench's shadow-off run does. design.md 1.6 now names the setting.
+
+### D58. Shadow and backtest choices (2026-11-07)
+
+Choices made within D39, D40q, D51.4, D55, D56 and D57, shown to the owner with D57's questions and accepted. The owner approved the doc changes with them: design.md 1.6 (two settings), section 2 (the shadow columns' checks), section 8 (shadow) and section 12 (shadow cost).
+
+| # | Choice | Value | Why |
+|---|---|---|---|
+| a | Where the model comes from | `ml/model/` is copied into the image; at startup the API loads `model.json` and `model.txt` from `SHADOW_MODEL_DIR`, default `ml/model` | the image carries exactly the model the card describes (D55.4) |
+| b | Load checks | `model.json` readable; its inputs exactly the 31 features in `FEATURE_NAMES` order; `model.txt`'s SHA-256 equal to `model.json`'s; LightGBM's feature names equal to the inputs. A failure is logged and the API starts without a model | design.md section 7: a missing or corrupt model leaves decisions unchanged |
+| c | What a row stores | shadow off: both columns null. A model loaded: its name always, and the score null when scoring fails. Shadow on but no model loaded: both null | the name tells "off" from "failed" whenever a model loaded; the counter and the startup log tell the rest |
+| d | A valid score | one finite number from 0 to 1, the range of LightGBM's binary objective; anything else is stored as null and counted | makes I8's "nonsense" exact |
+| e | Migration | `0005_shadow.sql`: `shadow_score double precision` and `shadow_model text`, both nullable, with checks that a score is null or from 0 to 1 and that a score has a model name | a row can't hold a score that no model gave |
+| f | Counter | `risk_shadow_failures_total`, by `reason`: `unavailable` (shadow on, no model loaded), `error`, `invalid`, `timeout` | design.md section 7's shadow error counter |
+| g | Replays | not scored again; a replay returns the stored row as before | one row, one score |
+| h | Scoring | one worker thread; the 31 features as float64 in `model.json`'s order; LightGBM predicts with one thread | float32 can't hold every amount in cents (ml/dataset.py); one OpenMP thread suits a single row |
+| i | I8 test | LightGBM can't load on the Mac (D51.4), so the test runs the decision path in the test process against the stack's Redis and Postgres with stand-in models (none, a working one, one that raises, one that returns nonsense, one that's slow) on identical Hypothesis-generated histories in separate accounts. A second check sends the same requests to the stack's API, with the real model, and to a second API with shadow off | the stand-ins cover every failure; the second check covers the real model |
+| j | `tests/integration/test_shadow.py` | rows from the stack's API hold `model.json`'s name and a score equal to LightGBM's score of the stored features, recomputed in the image; a second API started with a corrupt model stores null scores and counts them; a model that raises stores null and is counted | Phase 8's criterion 2 against the real model |
+| k | `make backtest` | runs `python -m ml.backtest` in the image (D51.4), in a Compose service like `model`'s; reads the CSV, `ml/rules/paysim.yaml` and `ml/model/`; refuses a CSV whose SHA-256 differs from the one the model and the rule file name; writes `ml/reports/backtest.md` and `ml/reports/backtest.json` | the comparison runs on the data the model and the rule set were built from |
+| l | Talk and video | `docs/talk.md` gains a 2b part; the 3-minute demo video is the owner's to record (PLAN.md section 9) | |
+| m | Dependencies | none added | |
+
 ## Open questions
 
 None. Every question from PLAN.md section 5 and every question found since is answered above.

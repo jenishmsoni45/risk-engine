@@ -128,6 +128,8 @@ Every setting comes from the environment, with `.env.example` holding throwaway 
 | `STUB_ON_TIMEOUT_DEFAULT` | `hold` | D10 |
 | `STUB_RELAY_POLL_MS`, `STUB_RELAY_BATCH` | `200`, `100` | D40k |
 | `STUB_REPLAY` | `0` | D40u |
+| `SHADOW_MODEL_DIR` | `ml/model`; empty turns shadow scoring off | D57.5, D58a |
+| `SHADOW_TIMEOUT_MS` | `10` | D57.1 |
 
 ## 2. Data model
 
@@ -150,7 +152,7 @@ Tables are created by numbered SQL migrations (D40w).
 | `fired` | jsonb | not null, a JSON array of strings |
 | `features` | jsonb | not null, a JSON object holding all 31 names (`features ?& array[...]`) |
 | `feature_lag_ms` | bigint | not null |
-| `shadow_score`, `shadow_model` | double precision, text | 2b (Phase 8), nullable |
+| `shadow_score`, `shadow_model` | double precision, text | 2b (Phase 8), nullable; a score is null or from 0 to 1, and a score has a model name (D58e) |
 
 These constraints are I5's schema half. An index on `(from_account_id, requested_at)` serves rebuilding attempts.
 
@@ -252,8 +254,8 @@ If the deadline passes before step 7 commits, or Redis or Postgres fails, the an
 - **PaySim rule set** (D54): `ml/rules/paysim.yaml`, version 2, written by `make paysim-rules`: D20's rules with every threshold on a cent feature (`amount` and the sums) multiplied by the smallest integer factor at which the set holds or blocks at most 1% of the training days' transfers (D38). Only the backtest reads it; the service still loads `risk/rules/ruleset.yaml`.
 - **Training** (Phase 7, after D30 is confirmed): LightGBM on the training days only, with a fixed seed; the model file, its inputs and its threshold are written together with a model card.
 - **Metrics on the test days**: PR-AUC; recall and fraud value caught (the sum of fraud amounts held over all fraud amounts) at the 1% hold rate; false-positive rate (non-fraud held over all non-fraud).
-- **Shadow** (D39): the API loads the model at startup if one is configured; after the rules decide, it scores the 31 features and stores the score and model name in the row. Any failure stores null.
-- **Backtest CLI** (D40q): runs the PaySim rule set through the rule set's evaluation function, and the model, over the offline features of the test days and reports both at the rules' own hold rate, plus the model at 1%.
+- **Shadow** (D39, D57.1, D58): at startup the API loads the model in `SHADOW_MODEL_DIR` and checks it (D58b); a model that fails a check is logged and not used, and the API starts anyway. After the rules decide, one worker thread scores the 31 features, as float64 in the model's input order, and the row stores the model's name and the score. A score that raises, isn't one finite number from 0 to 1, or takes longer than `SHADOW_TIMEOUT_MS` is stored as null and counted by reason, and the decision goes on unchanged. With shadow off both columns are null; with shadow on and no model loaded both are null and each decision is counted. Replays aren't scored again.
+- **Backtest CLI** (D40q): runs the PaySim rule set through the rule set's evaluation function, and the model, over the offline features of the test days and reports both at the rules' own hold rate, plus the model at 1%. The model's line at either rate is drawn on the test days' scores by D55.3's rule (D57.3). `make backtest` runs it in the image and writes `ml/reports/backtest.md` and its data file, from which `make report` writes README's 2b block (D57.4, D58k).
 
 ## 9. Alternatives rejected
 
@@ -308,7 +310,7 @@ If the deadline passes before step 7 commits, or Redis or Postgres fails, the an
 - **Timeout rate**: the stub's backup answers over its transfers, from its `/metrics`.
 - **Consumer lag**: the distribution of `feature_lag_ms` over the run's decisions, and the consumer group's offset lag at the end.
 - **Hot account**: one receiver for every transfer, from senders drawn at random; p99 against the size of its 24 h window. The window is filled through Kafka to 1,000, 10,000, 100,000 and 1,000,000 events; at each size, 50 requests a second go straight to the decision API for 3 minutes, and the run stops after the first size whose p99 passes 50 ms (D48.2). The hot account receives rather than sends because every decision records an attempt on its sender, so a hot sender's window would grow with the bench's own requests during each step (D50).
-- **Shadow cost** (2b): the latency steps with shadow off and on.
+- **Shadow cost** (2b, D57.2): in one session, the direct latency steps run with shadow off and again with it on, and the stub and hot scenarios run with it on. The shadow-off run's crossing is the baseline for Phase 8's criterion 4, and the report gives the model's added p50 and p99 at each rate, shadow on minus off.
 - **Recording**: each run writes its k6 summary and a conditions file (CPU, memory, OS, Docker version and VM size, image tags, git commit and whether the tree was clean, rule set version) to `bench/results/<UTC date>/`. A script turns result files into the README's tables, so every README number comes from a script (D29).
 
 ## 13. Beyond one machine (not built)
