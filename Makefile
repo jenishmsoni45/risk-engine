@@ -16,7 +16,7 @@ THROWAWAY_PROJECTS := risk-engine-bench risk-engine-e2e risk-engine-parity
 PAYSIM_CSV ?= data/PS_20174392719_1491204439457_log.csv
 
 .PHONY: help sync up down test lint audit clean purge rebuild-features bench report check-readme e2e \
-	profile paysim-rules parity model
+	profile paysim-rules parity model backtest
 
 help:
 	@echo "make up      start the stack and wait until every service is healthy"
@@ -33,6 +33,7 @@ help:
 	@echo "make paysim-rules   write ml/rules/paysim.yaml, D20's rules rescaled to PAYSIM_CSV (D54)"
 	@echo "make parity  replay PAYSIM_CSV's first 10,000 transfers on a throwaway stack; check I7"
 	@echo "make model   train on PAYSIM_CSV in the image; write ml/model/ and the model card"
+	@echo "make backtest   the PaySim rules against the model on PAYSIM_CSV's test days, in the image"
 	@echo "make clean   remove this project's containers, volumes, network, image, .venv and caches"
 	@echo "make purge   make clean, then the pinned images no container uses and uv's cache"
 
@@ -96,6 +97,17 @@ model:
 		--volume "$(CURDIR)/ml/model:/app/ml/model" \
 		--volume "$(CURDIR)/ml/reports:/app/ml/reports" \
 		model --csv "/app/$(PAYSIM_CSV)"
+
+# The PaySim rules against the model on the test days (D40q, D58k), in the image like make model.
+# data/, ml/rules/ and ml/model/ are read-only; only ml/reports/ changes.
+backtest:
+	@test -f "$(PAYSIM_CSV)" || { echo "$(PAYSIM_CSV) doesn't exist: put the PaySim CSV in data/"; exit 2; }
+	$(COMPOSE) run --rm --build --no-TTY --user "$$(id -u):$$(id -g)" \
+		--volume "$(CURDIR)/data:/app/data:ro" \
+		--volume "$(CURDIR)/ml/rules:/app/ml/rules:ro" \
+		--volume "$(CURDIR)/ml/model:/app/ml/model:ro" \
+		--volume "$(CURDIR)/ml/reports:/app/ml/reports" \
+		backtest --csv "/app/$(PAYSIM_CSV)"
 
 audit: sync
 	@tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT; \

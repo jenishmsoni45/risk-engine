@@ -1,4 +1,4 @@
-"""The model card's metrics on the test days (design.md section 8).
+"""The model card's and the backtest's metrics on the test days (design.md section 8).
 
 - PR-AUC as average precision: over the distinct scores from the highest down, the precision at
   each score weighted by the recall gained there. Transfers sharing a score enter together, so the
@@ -75,11 +75,17 @@ class AtThreshold:
 def at_threshold(scores: Scores, fraud: Flags, amounts: Cents, threshold: float) -> AtThreshold:
     """Counts of what the threshold holds among the transfers."""
     _check(scores, fraud)
-    if amounts.shape != scores.shape:
+    return counts(held(scores, threshold), fraud, amounts)
+
+
+def counts(hold: Flags, fraud: Flags, amounts: Cents) -> AtThreshold:
+    """Counts of what a hold, one flag per transfer, holds among the transfers: a model's at a
+    threshold, or a rule set's (the backtest, D40q)."""
+    _check(hold.astype(np.float64), fraud)
+    if amounts.shape != hold.shape:
         raise ValueError("amounts must have one value per transfer")
-    hold = held(scores, threshold)
     return AtThreshold(
-        transfers=int(scores.size),
+        transfers=int(hold.size),
         held=int(hold.sum()),
         fraud=int(fraud.sum()),
         fraud_held=int((hold & fraud).sum()),

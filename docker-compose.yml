@@ -193,6 +193,18 @@ services:
     entrypoint: ["python", "-m", "ml.train"]
     restart: "no"
 
+  # make backtest (D58k): scores the committed model in this image, the only place LightGBM runs
+  # (D51.4), as the model service does. Its profile keeps `make up` from starting it; the command
+  # that runs it mounts what it reads and writes.
+  backtest:
+    image: risk-engine:local
+    build:
+      context: .
+    profiles: ["backtest"]
+    network_mode: none
+    entrypoint: ["python", "-m", "ml.backtest"]
+    restart: "no"
+
 volumes:
   postgres-data:
   kafka-data:
