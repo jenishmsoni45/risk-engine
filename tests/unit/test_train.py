@@ -129,6 +129,39 @@ def test_a_file_the_loader_refuses_is_refused(tmp_path: Path) -> None:
         build(path, *outputs(tmp_path), fit=FakeFit())
 
 
+def transfer_row(step: int, fraud: bool, n: int) -> tuple[str, ...]:
+    return (str(step), "TRANSFER", f"{10 + n}.00", f"C{n}", "0", "0", f"C{n + 1000}", "0", "0",
+            "1" if fraud else "0", "0")  # fmt: skip
+
+
+def test_threshold_days_without_a_transfer_are_refused(tmp_path: Path) -> None:
+    # Transfers on day 0 and day 11 only: days 3 and 4, the threshold days, hold none.
+    path = tmp_path / "gap.csv"
+    write_csv(path, [transfer_row(step, n % 2 == 0, n) for n, step in enumerate((1, 1, 265, 265))])
+    with pytest.raises(TrainError, match="the threshold days hold no transfer"):
+        build(path, *outputs(tmp_path), fit=FakeFit())
+
+
+@pytest.mark.parametrize("train_fraud", [False, True])
+def test_training_days_need_both_fraud_and_other_transfers(
+    tmp_path: Path, train_fraud: bool
+) -> None:
+    # Days 0 (training), 3 (threshold) and 11 (test); every training transfer is one kind.
+    steps = [(1, train_fraud), (1, train_fraud), (73, False), (265, True), (265, False)]
+    path = tmp_path / "one-kind.csv"
+    write_csv(path, [transfer_row(step, fraud, n) for n, (step, fraud) in enumerate(steps)])
+    with pytest.raises(TrainError, match="the training days need both"):
+        build(path, *outputs(tmp_path), fit=FakeFit())
+
+
+def test_test_days_need_both_fraud_and_other_transfers(tmp_path: Path) -> None:
+    steps = [(1, True), (1, False), (73, False), (265, False), (265, False)]
+    path = tmp_path / "no-test-fraud.csv"
+    write_csv(path, [transfer_row(step, fraud, n) for n, (step, fraud) in enumerate(steps)])
+    with pytest.raises(TrainError, match="the test days need both"):
+        build(path, *outputs(tmp_path), fit=FakeFit())
+
+
 def test_a_file_with_no_transfer_to_load_is_refused(tmp_path: Path) -> None:
     path = tmp_path / "payments.csv"
     write_csv(path, [("1", "PAYMENT", "10.00", "C1", "0", "0", "M2", "0", "0", "0", "0")])

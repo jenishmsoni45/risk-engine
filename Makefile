@@ -87,6 +87,7 @@ parity: sync
 
 # The model and its card (D56a): LightGBM runs only in the image (D51.4), as the caller's user so
 # the files it writes are the caller's. data/ is read-only; only ml/model/ and ml/reports/ change.
+# PAYSIM_CSV must be a path under data/, the only folder of yours the container sees.
 model:
 	@test -f "$(PAYSIM_CSV)" || { echo "$(PAYSIM_CSV) doesn't exist: put the PaySim CSV in data/"; exit 2; }
 	mkdir -p ml/model ml/reports
