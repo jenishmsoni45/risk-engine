@@ -8,6 +8,9 @@ dependencies = [
     "confluent-kafka==2.16.0",
     "fastapi==0.162.0",
     "httpx==0.28.1",
+    # 2b (D40s, D55). LightGBM is imported only inside the image, never on the Mac (D51.4).
+    "lightgbm==4.7.0",
+    "numpy==2.5.4",
     "prometheus-client==0.26.0",
     # The pool extra brings psycopg-pool, from psycopg's maintainers (D43).
     "psycopg[binary,pool]==3.3.6",

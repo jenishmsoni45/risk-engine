@@ -29,7 +29,8 @@ RUNTIME = {
     "prometheus-client",
 }
 DEV = {"pytest", "hypothesis", "ruff", "mypy", "pip-audit"}
-TWO_B = {"lightgbm", "pandas"}
+# numpy builds LightGBM's feature array (D55.2).
+TWO_B = {"lightgbm", "pandas", "numpy"}
 
 PINNED = re.compile(r"(?P<name>[A-Za-z0-9._-]+)(?:\[(?P<extras>[^\]]+)\])?==(?P<version>[^\s;]+)")
 FIXED_UTC = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")

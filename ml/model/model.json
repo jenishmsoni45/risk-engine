@@ -1,0 +1,57 @@
+{
+  "name": "lgbm-22f566b6643e",
+  "file": "model.txt",
+  "sha256": "22f566b6643eb0130f7376738d80f50864db773902e46ee8715eabf99ac4865d",
+  "inputs": [
+    "out_count_1m",
+    "out_sum_1m",
+    "out_count_1h",
+    "out_sum_1h",
+    "out_count_24h",
+    "out_sum_24h",
+    "in_count_1m",
+    "in_sum_1m",
+    "in_count_1h",
+    "in_sum_1h",
+    "in_count_24h",
+    "in_sum_24h",
+    "dest_in_count_1m",
+    "dest_in_sum_1m",
+    "dest_in_count_1h",
+    "dest_in_sum_1h",
+    "dest_in_count_24h",
+    "dest_in_sum_24h",
+    "dest_out_count_1m",
+    "dest_out_sum_1m",
+    "dest_out_count_1h",
+    "dest_out_sum_1h",
+    "dest_out_count_24h",
+    "dest_out_sum_24h",
+    "attempt_count_1m",
+    "attempt_sum_1m",
+    "attempt_count_1h",
+    "attempt_sum_1h",
+    "attempt_count_24h",
+    "attempt_sum_24h",
+    "amount"
+  ],
+  "threshold": 0.03012039931478348,
+  "data": {
+    "file": "PS_20174392719_1491204439457_log.csv",
+    "sha256": "16910f90577b0d981bf8ff289714510bb89bc71bff7d3f220f024e287e4eea6b"
+  },
+  "days": {
+    "train": [
+      0,
+      21
+    ],
+    "threshold": [
+      22,
+      23
+    ],
+    "test": [
+      24,
+      30
+    ]
+  }
+}

@@ -127,7 +127,7 @@ Phases 1 to 8 from PLAN.md section 6. Each phase is one PR, started only when th
 1. Before any training code runs, the owner confirms that LightGBM trained here is allowed under CLAUDE.md's AI-model rule, recorded in decisions.md (D30).
 2. The model's input list is exactly the 31 features. (`tests/unit/test_model_inputs.py`)
 3. Every training day is before every threshold day, every threshold day before every test day, and no transfer is in two sets. (`tests/unit/test_split.py`)
-4. The threshold holds 1% of the threshold days' transfers, to within one transfer. (`tests/unit/test_threshold.py`)
+4. The threshold holds at most 1% of the threshold days' transfers, and within one transfer of 1% unless several transfers share the score at the threshold (D55). (`tests/unit/test_threshold.py`)
 5. `make model` rebuilds the model file and the model card from the CSV, and two runs give the same metrics. (run by hand; card committed)
 6. The model card states the data, split, inputs, threshold, PR-AUC, recall and fraud value caught at the 1% hold rate, false-positive rate, and limitations.
 

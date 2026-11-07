@@ -10,6 +10,9 @@ from __future__ import annotations
 
 from typing import Literal
 
+import numpy as np
+import numpy.typing as npt
+
 from ml.paysim import STEP_1_MS
 from risk.features.compute import DAY_MS
 
@@ -17,6 +20,7 @@ TEST_DAYS = 7
 THRESHOLD_DAYS = 2
 
 Part = Literal["train", "threshold", "test"]
+PARTS: tuple[Part, ...] = ("train", "threshold", "test")
 
 
 def day_of(time_ms: int) -> int:
@@ -40,3 +44,15 @@ def part_of(day: int, last_day: int) -> Part:
     if day > last_day - TEST_DAYS - THRESHOLD_DAYS:
         return "threshold"
     return "train"
+
+
+def masks(days: npt.NDArray[np.int64]) -> dict[Part, npt.NDArray[np.bool_]]:
+    """Each set's transfers, given every transfer's day: one mask per part, by `part_of`, with
+    the data's last day as the latest day given. Every transfer is in exactly one set."""
+    if days.size == 0:
+        raise ValueError("no transfers to split")
+    last_day = int(days.max())
+    by_part: dict[Part, list[int]] = {part: [] for part in PARTS}
+    for day in np.unique(days).tolist():
+        by_part[part_of(day, last_day)].append(day)
+    return {part: np.isin(days, by_part[part]) for part in PARTS}

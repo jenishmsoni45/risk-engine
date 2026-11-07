@@ -16,7 +16,7 @@ THROWAWAY_PROJECTS := risk-engine-bench risk-engine-e2e risk-engine-parity
 PAYSIM_CSV ?= data/PS_20174392719_1491204439457_log.csv
 
 .PHONY: help sync up down test lint audit clean purge rebuild-features bench report check-readme e2e \
-	profile paysim-rules parity
+	profile paysim-rules parity model
 
 help:
 	@echo "make up      start the stack and wait until every service is healthy"
@@ -32,6 +32,7 @@ help:
 	@echo "make profile   profile PAYSIM_CSV into ml/reports/paysim_profile.md"
 	@echo "make paysim-rules   write ml/rules/paysim.yaml, D20's rules rescaled to PAYSIM_CSV (D54)"
 	@echo "make parity  replay PAYSIM_CSV's first 10,000 transfers on a throwaway stack; check I7"
+	@echo "make model   train on PAYSIM_CSV in the image; write ml/model/ and the model card"
 	@echo "make clean   remove this project's containers, volumes, network, image, .venv and caches"
 	@echo "make purge   make clean, then the pinned images no container uses and uv's cache"
 
@@ -83,6 +84,18 @@ paysim-rules: sync
 # I7 on real data (D36, D37): local only; needs the normal stack stopped (`make down`).
 parity: sync
 	uv run --locked python -m ml.parity --csv "$(PAYSIM_CSV)"
+
+# The model and its card (D56a): LightGBM runs only in the image (D51.4), as the caller's user so
+# the files it writes are the caller's. data/ is read-only; only ml/model/ and ml/reports/ change.
+# PAYSIM_CSV must be a path under data/, the only folder of yours the container sees.
+model:
+	@test -f "$(PAYSIM_CSV)" || { echo "$(PAYSIM_CSV) doesn't exist: put the PaySim CSV in data/"; exit 2; }
+	mkdir -p ml/model ml/reports
+	$(COMPOSE) run --rm --build --no-TTY --user "$$(id -u):$$(id -g)" \
+		--volume "$(CURDIR)/data:/app/data:ro" \
+		--volume "$(CURDIR)/ml/model:/app/ml/model" \
+		--volume "$(CURDIR)/ml/reports:/app/ml/reports" \
+		model --csv "/app/$(PAYSIM_CSV)"
 
 audit: sync
 	@tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT; \

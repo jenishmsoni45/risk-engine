@@ -94,7 +94,7 @@ Each criterion is checked by a test or a script named in [phases.md](phases.md).
 1. Phase 7 starts only after the owner confirms that training LightGBM here is allowed under CLAUDE.md's AI-model rule (D30).
 2. The model uses only the 31 features: D35's inputs without the hour of day (D54).
 3. The split is by days: test on the last 7, set the threshold on the 2 before, train on the rest (D38).
-4. The threshold holds 1% of transfers on the threshold days (D34).
+4. The threshold holds at most 1% of transfers on the threshold days (D34, D55).
 5. One command rebuilds the model card: data, split, inputs, threshold, PR-AUC, recall and fraud value caught at the 1% hold rate, false-positive rate, and limitations.
 
 **US14. Shadow without risk.** As an on-call engineer, I want the model scored next to every decision without any way to change it, so that we learn safely.
