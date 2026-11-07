@@ -140,7 +140,7 @@ Phases 1 to 8 from PLAN.md section 6. Each phase is one PR, started only when th
 **Acceptance criteria**
 1. I8: decisions are identical with shadow off, on, and on with a model that raises, returns nonsense or is slow. (`tests/invariants/test_i8_shadow.py`)
 2. Each row stores the score and model name; a scoring failure stores null and is counted. (`tests/integration/test_shadow.py`)
-3. The backtest CLI reports, on the test days, the rules at their own hold rate against the model at that rate, plus the model at 1%, with recall, fraud value caught and false-positive rate. (`tests/unit/test_backtest.py` on generated data; the real report committed)
+3. The backtest CLI reports, on the test days, the rules at their own hold rate against the model at that rate, plus the model at 1%, with recall, fraud value caught and false-positive rate; where a tie at the model's line straddles a rate, the model on both sides of it (D59). (`tests/unit/test_backtest.py` on generated data; the real report committed)
 4. With shadow on, p99 stays within 50 ms at every bench rate below the one where 2a's p99 crossed 50 ms, and the added latency comes from the report script. (`make bench`, `make check-readme`)
 5. I6 to I8 run in CI.
 6. README.md's 2b numbers come from the scripts, and PLAN.md section 9's definition of done is met.

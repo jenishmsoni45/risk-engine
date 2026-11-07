@@ -606,6 +606,13 @@ Choices made within D39, D40q, D51.4, D55, D56 and D57, shown to the owner with 
 | l | Talk and video | `docs/talk.md` gains a 2b part; the 3-minute demo video is the owner's to record (PLAN.md section 9) | |
 | m | Dependencies | none added | |
 
+### D59. A tie at the backtest's line (2026-11-07)
+
+- Found by the first `make backtest` on the owner's CSV: on the test days' 67,944 transfers, 659 score above 0.03012039931478348 and 199 score exactly that, 57 of them fraud. The rules hold 786 and 1% is 679, so both lines fall inside the tie. By D55.3's rule, which D57.3 applied to the backtest, the model then held 659 at both lines, and US15's comparison at the same hold rate wasn't one: the model held 127 fewer transfers than the rules.
+- Options: show the model on both sides of a tie at the line; split the tie in proportion (the tied group's counts scaled by the share of it needed, what a random pick gives on average); keep D55.3's rule and name the tie in the report; break the tie by file order.
+- Answer: **both sides of the tie** (owner). At each line, when the transfers sharing the score at the line straddle the count, the backtest reports the model holding those above the tie and the model holding the tie as well, and how many share the score; otherwise one line, holding exactly the count. Nothing is guessed and no tie is broken. This replaces "the model holds those scoring at or above the lowest score at which at most ⌊n / 100⌋ do, D55.3's rule" in D57.3's answer, and the same for the rules' rate; the rest of D57.3 stands. D55.3 still sets the model's threshold.
+- Doc changes (owner approved): design.md section 8 (backtest), requirements.md US15.1, and phases.md Phase 8 criterion 3 to match.
+
 ## Open questions
 
 None. Every question from PLAN.md section 5 and every question found since is answered above.
