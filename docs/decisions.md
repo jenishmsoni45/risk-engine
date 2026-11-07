@@ -526,6 +526,45 @@ Phase 6's stop-and-ask, answered after `make profile` wrote `ml/reports/paysim_p
    - Consequences: the hour stays in the offline pipeline, computed in `risk/features/compute.py` (D52l), for the profile's hour table (D51.2); no model reads it.
 - Doc changes: design.md section 8 (offline pipeline, a new PaySim rule set entry, shadow, backtest); requirements.md US13.2 and US15.1; architecture.md section 6; phases.md Phase 6 scope and a new criterion 10, and Phase 7 criterion 2.
 
+### D55. Phase 7's opening questions (2026-11-07)
+
+Five questions, asked before any Phase 7 code: D30, which Phase 0 deferred to here, three the docs didn't settle, and the check D51.4 left to this phase.
+
+1. **D30: LightGBM under CLAUDE.md's AI-model rule.**
+   - Question: may this repo train a LightGBM model from the owner's PaySim copy and save it? CLAUDE.md says never to download or run an AI model.
+   - Options: allowed; a logistic regression written here in numpy, with no machine-learning library; no model.
+   - Answer: **allowed** (owner). LightGBM is a code library, installed through uv with D41's safeguards like every other dependency; no pretrained model is downloaded. The model is trained here, from the owner's CSV, and only inside Docker (D51.4). This closes D30 and meets Phase 7's criterion 1.
+2. **What builds the feature array.** LightGBM takes the training days' features as one numeric array.
+   - Options: numpy; pandas, as D40s planned.
+   - Answer: **numpy** (owner), added to D40s's 2b list as a direct dependency. LightGBM depends on it already, so it adds no package to the lock. pandas stays on the list and is not installed. The rest of D40s stands.
+   - Consequences: the lock adds lightgbm 4.7.0 and numpy 2.5.4, and LightGBM's own dependencies scipy 1.18.1 and narwhals 2.27.1. Each has a wheel for macOS arm64 and Linux arm64 for Python 3.12, older than D41's cutoff.
+3. **A tie at the 1% line.** A tree model gives many transfers exactly the same score, so a tie can straddle the line, and no line then holds 1% to within one transfer.
+   - Options: never above 1%; closest to 1%; break ties by transfer id.
+   - Answer: **never above 1%** (owner). Of the threshold days' n transfers, k = ⌊n / 100⌋ may be held. The threshold is the lowest score at which at most k of them score at or above it, and a transfer is held when its score is at or above the threshold. Without a tie at the line exactly k are held, within one transfer of 1%; with one, fewer, and the model card gives the count.
+   - Why: review capacity is a ceiling, and the PaySim rule set already holds at most 1% (D54).
+   - Doc changes (owner approved): requirements.md US13.4, design.md section 8 (split and threshold), phases.md Phase 7 criterion 4.
+4. **Whether the model file is committed.**
+   - Options: commit it; keep it out of git and rebuild it with `make model`.
+   - Answer: **commit it** (owner). It holds trees: the features they split on, the split values and the leaf values. It holds no PaySim row and no account name, since its inputs are the 31 features. The model card names its SHA-256.
+   - Why: Phase 8, and anyone who clones the repo, use exactly the model the card describes.
+5. **LightGBM's OpenMP runtime in the image** (D51.4).
+   - Found: in the image built from `python:3.12.16-slim-trixie`, `import lightgbm` fails with `OSError: libgomp.so.1: cannot open shared object file`.
+   - Options: install Debian's `libgomp1` with apt, pinned; the same, unpinned; don't add it.
+   - Answer: **apt, pinned** (owner). The image's final stage installs `libgomp1=14.2.0-19`, trixie's version, built from gcc-14 like the base image's C runtime, without recommended packages, and deletes the package lists. If Debian replaces that version, the build fails, and a PR moves the pin. Nothing is installed on the Mac.
+
+### D56. Training choices (2026-11-07)
+
+Choices made within D34, D38, D51.4, D54 and D55, shown to the owner with D55's questions and accepted.
+
+| # | Choice | Value | Why |
+|---|---|---|---|
+| a | Where training runs | `make model` runs a `model` Compose service from the app image, in a Compose profile so `make up` never starts it; it reads `data/` read-only and writes only `ml/model/` and `ml/reports/` | LightGBM runs only inside Docker (D51.4) |
+| b | What it writes | `ml/model/model.txt` (LightGBM's text format), `ml/model/model.json` (the model's name, its 31 inputs in order, its threshold, the CSV's SHA-256 and the days of each set) and `ml/reports/model_card.md`. The name is `lgbm-` and the first 12 hex digits of `model.txt`'s SHA-256 | Phase 8 loads one folder, and the name changes whenever the model does |
+| c | Settings | fixed, no search: binary objective, 300 rounds, learning rate 0.05, 31 leaves, at least 100 transfers per leaf, a fixed seed, one thread, deterministic mode; no early stopping, no class weights | early stopping needs a held-out set, and the threshold days only set the threshold while the test days stay unseen (D38); one thread makes two runs identical |
+| d | The threshold | D55.3 on the threshold days' scores | review capacity is a ceiling |
+| e | Metrics on the test days | the threshold from the threshold days, unchanged; the card also gives the share it holds on the test days. PR-AUC is average precision, computed in this repo with numpy | the test days stay unseen until scored; no further library |
+| f | Tests | no test on the Mac imports LightGBM. One integration test trains twice on generated data inside the image and checks that the two model files are identical | every test runs on the Mac and in CI, none skipped, and determinism is checked in CI |
+
 ## Open questions
 
-None. Every question from PLAN.md section 5 and every question found since is answered above. One answer is a deferral the owner chose: D30 (the AI-model rule) is confirmed at the start of Phase 7.
+None. Every question from PLAN.md section 5 and every question found since is answered above.
