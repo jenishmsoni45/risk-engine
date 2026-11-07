@@ -38,6 +38,9 @@ class NewDecision:
     fired: list[str]
     features: dict[str, int]
     feature_lag_ms: int
+    # 2b (D39, D58c): null with shadow off; a failed score is null beside its model's name.
+    shadow_score: float | None
+    shadow_model: str | None
 
 
 FIND = """
@@ -50,8 +53,9 @@ where request_id = %s
 INSERT = """
 insert into decisions (
     decision_id, request_id, from_account_id, to_account_id, amount, currency, requested_at,
-    decided_at, decision, rule_set_version, rule_set_hash, fired, features, feature_lag_ms
-) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    decided_at, decision, rule_set_version, rule_set_hash, fired, features, feature_lag_ms,
+    shadow_score, shadow_model
+) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 on conflict (request_id) do nothing
 returning decision_id
 """
@@ -84,6 +88,8 @@ async def insert(conn: AsyncConnection, row: NewDecision) -> bool:
             Jsonb(row.fired),
             Jsonb(row.features),
             row.feature_lag_ms,
+            row.shadow_score,
+            row.shadow_model,
         ),
     )
     return await cursor.fetchone() is not None

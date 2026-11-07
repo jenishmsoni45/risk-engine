@@ -16,11 +16,13 @@ from fastapi import FastAPI
 from ledger_stub.app import app as stub_app
 from risk.api import app as api_app
 
-# Port 1 on the loopback refuses connections at once.
+# Port 1 on the loopback refuses connections at once. Shadow scoring is off, since LightGBM never
+# loads on the Mac (D51.4).
 UNREACHABLE = {
     "DATABASE_URL": "postgresql://nobody:dummy@127.0.0.1:1/nothing",
     "REDIS_URL": "redis://127.0.0.1:1/0",
     "KAFKA_BOOTSTRAP": "127.0.0.1:1",
+    "SHADOW_MODEL_DIR": "",
 }
 
 

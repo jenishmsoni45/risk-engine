@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse
 from prometheus_client import Counter
 from psycopg_pool import AsyncConnectionPool
 
-from risk import settings
+from risk import settings, shadow
 from risk.checks import (
     CHECK_TIMEOUT_S,
     check_postgres,
@@ -132,12 +132,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.health_redis = health_redis
     app.state.rules = rules
     app.state.deadline_s = deadline_s
+    # 2b (D39, D58): a model that fails its checks is logged, and the API starts without it.
+    scorer = shadow.start(settings.shadow_model_dir(), settings.shadow_timeout_ms() / 1000)
     app.state.engine = DecisionEngine(
-        rules, pool, FeatureStore(redis, settings.lateness_margin_ms())
+        rules, pool, FeatureStore(redis, settings.lateness_margin_ms()), scorer
     )
     try:
         yield
     finally:
+        if scorer is not None:
+            scorer.close()
         await pool.close()
         await redis.aclose()
         await health_redis.aclose()

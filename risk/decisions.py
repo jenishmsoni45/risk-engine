@@ -1,4 +1,5 @@
-"""The decision request (design.md 1.1) and the decision path (design.md section 4)."""
+"""The decision request (design.md 1.1) and the decision path (design.md section 4), with the
+shadow score (2b, D39)."""
 
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from risk.features.redis_store import FeatureStore
 from risk.formats import CANONICAL_UUID, CURRENCY, IDEMPOTENCY_KEY, MAX_AMOUNT
 from risk.problems import FieldError
 from risk.rules.ruleset import RuleSet
+from risk.shadow import Shadow
 from risk.timestamps import epoch_ms, parse_offset_timestamp, truncate_to_ms
 
 
@@ -136,12 +138,21 @@ def answer_from(stored: store.StoredDecision) -> Answer:
 
 
 class DecisionEngine:
-    """Steps 3 to 8 of design.md section 4. The deadline and the 503 are risk/api.py's."""
+    """Steps 3 to 8 of design.md section 4. The deadline and the 503 are risk/api.py's.
 
-    def __init__(self, rules: RuleSet, pool: AsyncConnectionPool, features: FeatureStore) -> None:
+    `shadow` is None when shadow scoring is off (D57.5)."""
+
+    def __init__(
+        self,
+        rules: RuleSet,
+        pool: AsyncConnectionPool,
+        features: FeatureStore,
+        shadow: Shadow | None = None,
+    ) -> None:
         self.rules = rules
         self.pool = pool
         self.features = features
+        self.shadow = shadow
 
     async def decide(self, request: DecisionRequest) -> Answer | Conflict:
         """Steps 3 to 7: a stored decision, a 409, or a new decision row."""
@@ -159,6 +170,11 @@ class DecisionEngine:
             features = features_at(t_ms, request.amount, members)
             lag_ms = t_ms - watermark_ms
             decision, fired = self.rules.evaluate(features)
+            # Step 6 (D39): the decision and fired are fixed above; the score is only stored, and
+            # Shadow.score never raises, so the model can't change the answer (I8).
+            score, model = None, None
+            if self.shadow is not None:
+                score, model = await self.shadow.score(features), self.shadow.model_name
             row = store.NewDecision(
                 decision_id=uuid.uuid4(),
                 request_id=request.request_id,
@@ -174,6 +190,8 @@ class DecisionEngine:
                 fired=fired,
                 features=features,
                 feature_lag_ms=lag_ms,
+                shadow_score=score,
+                shadow_model=model,
             )
             if await store.insert(conn, row):
                 return Answer(row.decision_id, decision, self.rules.name, fired, replayed=False)

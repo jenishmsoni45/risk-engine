@@ -27,7 +27,8 @@ WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
 COPY risk ./risk
 COPY ledger_stub ./ledger_stub
-# 2b's code, for make model (D56a); the PaySim CSV is mounted at run time, never copied.
+# 2b's code, for make model and make backtest (D56a, D58k), and the committed model, which the
+# decision API scores in shadow (D58a). The PaySim CSV is mounted at run time, never copied.
 COPY ml ./ml
 ENV PATH=/app/.venv/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
