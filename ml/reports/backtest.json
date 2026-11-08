@@ -1,0 +1,99 @@
+{
+  "csv_name": "PS_20174392719_1491204439457_log.csv",
+  "csv_sha256": "16910f90577b0d981bf8ff289714510bb89bc71bff7d3f220f024e287e4eea6b",
+  "rules_file": "ml/rules/paysim.yaml",
+  "rules_version": 2,
+  "rules_sha256": "621f8ade95700cdcfc65935f372c0f2a6af88941b7b0b38f1ad0502ca27b865e",
+  "model_name": "lgbm-22f566b6643e",
+  "test_days": [
+    24,
+    30
+  ],
+  "lines": [
+    {
+      "who": "rules",
+      "rate": "own",
+      "side": "exact",
+      "tied": 0,
+      "threshold": null,
+      "counts": {
+        "transfers": 67944,
+        "held": 786,
+        "fraud": 1831,
+        "fraud_held": 306,
+        "fraud_cents": 296664583364,
+        "fraud_cents_held": 211711746079,
+        "not_fraud": 66113,
+        "not_fraud_held": 480
+      }
+    },
+    {
+      "who": "model",
+      "rate": "rules",
+      "side": "above",
+      "tied": 199,
+      "threshold": 0.04537528826525622,
+      "counts": {
+        "transfers": 67944,
+        "held": 659,
+        "fraud": 1831,
+        "fraud_held": 269,
+        "fraud_cents": 296664583364,
+        "fraud_cents_held": 200235389854,
+        "not_fraud": 66113,
+        "not_fraud_held": 390
+      }
+    },
+    {
+      "who": "model",
+      "rate": "rules",
+      "side": "with",
+      "tied": 199,
+      "threshold": 0.03012039931478348,
+      "counts": {
+        "transfers": 67944,
+        "held": 858,
+        "fraud": 1831,
+        "fraud_held": 326,
+        "fraud_cents": 296664583364,
+        "fraud_cents_held": 215751833957,
+        "not_fraud": 66113,
+        "not_fraud_held": 532
+      }
+    },
+    {
+      "who": "model",
+      "rate": "1%",
+      "side": "above",
+      "tied": 199,
+      "threshold": 0.04537528826525622,
+      "counts": {
+        "transfers": 67944,
+        "held": 659,
+        "fraud": 1831,
+        "fraud_held": 269,
+        "fraud_cents": 296664583364,
+        "fraud_cents_held": 200235389854,
+        "not_fraud": 66113,
+        "not_fraud_held": 390
+      }
+    },
+    {
+      "who": "model",
+      "rate": "1%",
+      "side": "with",
+      "tied": 199,
+      "threshold": 0.03012039931478348,
+      "counts": {
+        "transfers": 67944,
+        "held": 858,
+        "fraud": 1831,
+        "fraud_held": 326,
+        "fraud_cents": 296664583364,
+        "fraud_cents_held": 215751833957,
+        "not_fraud": 66113,
+        "not_fraud_held": 532
+      }
+    }
+  ]
+}

@@ -62,9 +62,20 @@ def test_the_backtest_runs_in_the_image_on_a_real_model(tmp_path: Path) -> None:
     assert result.model_name == meta["name"]
     assert "## On the test days" in (tmp_path / "out" / "backtest.md").read_text()
 
-    rules_line, at_rules, at_one = result.lines
+    rules_line, *model_rows = result.lines
     on_the_mac = run(csv, rules, trained / "model", any_scores)
     assert rules_line == on_the_mac.lines[0]
     assert rules_line.counts.held > 0
-    assert at_rules.counts.held <= rules_line.counts.held
-    assert at_one.counts.held <= capacity(at_one.counts.transfers)
+    # Each rate gives one line holding exactly its count, or, when a tie at the model's line
+    # straddles the count, a line above the tie and one with it (D59).
+    rates = {"rules": rules_line.counts.held, "1%": capacity(rules_line.counts.transfers)}
+    assert {line.rate for line in model_rows} == set(rates)
+    for rate, count in rates.items():
+        at = [line for line in model_rows if line.rate == rate]
+        if len(at) == 1:
+            assert (at[0].side, at[0].counts.held) == ("exact", count)
+        else:
+            above, with_tie = at
+            assert (above.side, with_tie.side) == ("above", "with")
+            assert above.counts.held < count < with_tie.counts.held
+            assert with_tie.counts.held - above.counts.held == with_tie.tied

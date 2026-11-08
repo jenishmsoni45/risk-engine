@@ -205,10 +205,14 @@ def test_the_model_off_run_stays_out_of_the_direct_table(results: Path) -> None:
 
 
 def backtest_file(folder: Path) -> Path:
-    def line(who: str, rate: str, threshold: float | None, held: int, caught: int) -> Line:
+    def line(
+        who: str, rate: str, threshold: float | None, held: int, caught: int, side: str = "exact"
+    ) -> Line:
         return Line(
             who,
             rate,
+            side,
+            0 if side == "exact" else 12,
             threshold,
             AtThreshold(
                 transfers=1000,
@@ -233,12 +237,30 @@ def backtest_file(folder: Path) -> Path:
         lines=(
             line("rules", "own", None, 20, 4),
             line("model", "rules", 0.4, 20, 9),
-            line("model", "1%", 0.6, 10, 6),
+            line("model", "1%", 0.6, 4, 3, "above"),
+            line("model", "1%", 0.5, 16, 8, "with"),
         ),
     )
     path = folder / "backtest.json"
     path.write_text(json.dumps(data(result)))
     return path
+
+
+def no_backtest(tmp_path: Path, results: Path) -> list[str]:
+    """Arguments that point the report at these results and at no backtest, so a test never
+    reads the repo's own files."""
+    return ["--results", str(results), "--backtest", str(tmp_path / "no-backtest.json")]
+
+
+def test_a_backtest_file_in_another_shape_is_refused(results: Path, tmp_path: Path) -> None:
+    readme = tmp_path / "README.md"
+    blocks = f"{report.START}\n{report.END}\n{report.START_2B}\n{report.END_2B}\n"
+    readme.write_text(blocks)
+    stale = tmp_path / "backtest.json"
+    stale.write_text(json.dumps({"lines": [{"who": "rules"}]}))
+    args = ["--results", str(results), "--backtest", str(stale), "--write", str(readme)]
+    assert report.main(args) == 1
+    assert readme.read_text() == blocks
 
 
 def test_the_2b_block_holds_the_backtest_and_the_shadow_cost(results: Path, tmp_path: Path) -> None:
@@ -251,6 +273,10 @@ def test_the_2b_block_holds_the_backtest_and_the_shadow_cost(results: Path, tmp_
         "| 1.67% (16) |"
     ) in block
     assert "| model `lgbm-test`, at the rules' hold rate | 2.00% (20) | 22.50% (9 of 40) |" in block
+    assert "| model `lgbm-test`, at 1%: above a tie of 12 | 0.40% (4) | 7.50% (3 of 40) |" in block
+    assert (
+        "| model `lgbm-test`, at 1%: with the tie of 12 | 1.60% (16) | 20.00% (8 of 40) |" in block
+    )
     # Added latency is on minus off, at each rate both runs reached; Scored is the on run's.
     assert "| 50 | 1.5 | 2.0 | +0.5 | 5.0 | 6.0 | +1.0 | 99.90% |" in block
     assert "| 100 | 1.8 | 2.5 | +0.8 | 7.0 | 61.2 | +54.2 | 100.00% |" in block
@@ -317,7 +343,7 @@ def test_results_from_a_dirty_tree_or_short_steps_never_go_in_the_readme(
     write(results, "conditions-direct.json", conditions("direct", **change))
     readme = tmp_path / "README.md"
     readme.write_text(f"intro\n{report.START}\n{report.END}\n")
-    assert report.main(["--results", str(results), "--write", str(readme)]) == 1
+    assert report.main([*no_backtest(tmp_path, results), "--write", str(readme)]) == 1
     assert readme.read_text() == f"intro\n{report.START}\n{report.END}\n"
     _, problems = report.render(results)
     assert any(problem in p for p in problems)
@@ -358,7 +384,7 @@ def test_a_readme_without_exactly_one_of_each_block_is_refused(
 ) -> None:
     readme = tmp_path / "README.md"
     readme.write_text(text)
-    assert report.main(["--results", str(results), "--check", str(readme)]) == 1
+    assert report.main([*no_backtest(tmp_path, results), "--check", str(readme)]) == 1
 
 
 def test_the_newest_folder_is_read(tmp_path: Path) -> None:

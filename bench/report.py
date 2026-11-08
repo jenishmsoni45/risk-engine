@@ -293,7 +293,10 @@ def render_2b(folder: Path, backtest: Path) -> str:
         "",
     ]
     if backtest.is_file():
-        result = from_data(load(backtest))
+        try:
+            result = from_data(load(backtest))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ReportError(f"{backtest} can't be read, so run `make backtest`: {exc}") from exc
         first = result.lines[0].counts
         out += [
             f"Days {result.test_days[0]} to {result.test_days[1]} of `{result.csv_name}`: "

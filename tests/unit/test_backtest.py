@@ -95,7 +95,7 @@ def test_the_rules_line_is_the_services_own_decisions_on_the_test_days(
         if rules.evaluate(f)[0] != "allow"
     ]
     line = result.lines[0]
-    assert (line.who, line.rate, line.threshold) == ("rules", "own", None)
+    assert (line.who, line.rate, line.side, line.threshold) == ("rules", "own", "exact", None)
     assert line.counts.transfers == len(rows_on_test_days(csv))
     assert line.counts.held == len(expected)
     assert line.counts.fraud_held == sum(fraud for _, fraud in expected)
@@ -105,13 +105,14 @@ def test_the_rules_line_is_the_services_own_decisions_on_the_test_days(
 def test_the_model_holds_as_many_as_the_rules_then_1pct(tmp_path: Path, csv: Path) -> None:
     rules_path, model = setup(tmp_path, csv, median_test_amount(csv))
     rules_line, at_rules, at_one = run(csv, rules_path, model, shuffled).lines
-    # Distinct scores: no tie at either line, so each holds exactly its count (D55.3).
-    assert (at_rules.who, at_rules.rate) == ("model", "rules")
+    # Distinct scores: no tie at either line, so each holds exactly its count.
+    assert (at_rules.who, at_rules.rate, at_rules.side) == ("model", "rules", "exact")
     assert at_rules.counts.held == rules_line.counts.held > 0
-    assert (at_one.who, at_one.rate) == ("model", "1%")
+    assert (at_one.who, at_one.rate, at_one.side) == ("model", "1%", "exact")
     assert at_one.counts.held == capacity(at_one.counts.transfers) > 0
     assert at_rules.threshold is not None
     assert at_one.threshold is not None
+    assert at_rules.tied == at_one.tied == 0
 
 
 def test_a_model_ranking_as_the_rule_does_holds_the_same_transfers(
@@ -121,16 +122,51 @@ def test_a_model_ranking_as_the_rule_does_holds_the_same_transfers(
     same ones, so every count agrees. Amounts here are distinct enough for no tie at the line."""
     amounts = sorted({amount for amount, _, _ in rows_on_test_days(csv)}, reverse=True)
     rules_path, model = setup(tmp_path, csv, amounts[len(amounts) // 10])
-    rules_line, at_rules, _ = run(csv, rules_path, model, by_amount).lines
+    rules_line, at_rules = run(csv, rules_path, model, by_amount).lines[:2]
+    assert (at_rules.rate, at_rules.side) == ("rules", "exact")
     assert at_rules.counts == rules_line.counts
 
 
-def test_a_tie_above_every_line_holds_nothing(tmp_path: Path, csv: Path) -> None:
+def tie_around_1pct(model: Path, x: Rows) -> tuple[str, Scores]:
+    """Distinct scores, falling with the row, except that the six around the 1% count share one:
+    three of them inside the count and three outside."""
+    scores = np.linspace(1.0, 0.0, len(x))
+    k = capacity(len(x))
+    scores[k - 3 : k + 3] = scores[k - 3]
+    return "stand-in-tie", scores
+
+
+def test_a_tie_straddling_a_line_shows_both_sides(tmp_path: Path, csv: Path) -> None:
+    """D59: no line holds exactly 1%, so the model is shown above the tie and with it."""
     rules_path, model = setup(tmp_path, csv, median_test_amount(csv))
-    _, at_rules, at_one = run(csv, rules_path, model, tied).lines
-    for line in (at_rules, at_one):
-        assert line.threshold is None
-        assert line.counts.held == 0
+    lines = run(csv, rules_path, model, tie_around_1pct).lines
+    at_one = [line for line in lines if line.rate == "1%"]
+    k = capacity(at_one[0].counts.transfers)
+    above, with_tie = at_one
+    assert (above.side, above.tied, above.counts.held) == ("above", 6, k - 3)
+    assert (with_tie.side, with_tie.tied, with_tie.counts.held) == ("with", 6, k + 3)
+    assert above.threshold is not None
+    assert with_tie.threshold is not None
+    assert with_tie.threshold < above.threshold
+    # Holding the tie as well adds exactly its fraud: never fewer than above it.
+    assert with_tie.counts.fraud_held >= above.counts.fraud_held
+
+
+def test_a_tie_over_every_line_shows_nothing_held_and_everything_held(
+    tmp_path: Path, csv: Path
+) -> None:
+    rules_path, model = setup(tmp_path, csv, median_test_amount(csv))
+    _, *model_rows = run(csv, rules_path, model, tied).lines
+    assert [(line.rate, line.side) for line in model_rows] == [
+        ("rules", "above"),
+        ("rules", "with"),
+        ("1%", "above"),
+        ("1%", "with"),
+    ]
+    for above, with_tie in (model_rows[:2], model_rows[2:]):
+        assert (above.threshold, above.counts.held) == (None, 0)
+        n = with_tie.counts.transfers
+        assert (with_tie.threshold, with_tie.counts.held, with_tie.tied) == (0.5, n, n)
 
 
 def test_only_the_test_days_are_scored(tmp_path: Path, csv: Path) -> None:
@@ -196,3 +232,22 @@ def test_the_table_names_each_line_and_its_counts(tmp_path: Path, csv: Path) -> 
     assert lines[4].startswith("| model `stand-in-shuffled`, at 1% | ")
     c = result.lines[0].counts
     assert f"({c.fraud_held} of {c.fraud})" in lines[2]
+
+
+def test_the_table_names_each_side_of_a_tie_and_merges_lines_both_rates_share(
+    tmp_path: Path, csv: Path
+) -> None:
+    """With every score tied, both rates give the same two lines: one row each, naming both."""
+    rules_path, model = setup(tmp_path, csv, median_test_amount(csv))
+    result = run(csv, rules_path, model, tied)
+    lines = comparison(result)
+    n = result.lines[0].counts.transfers
+    assert len(lines) == 2 + 3
+    assert lines[3].startswith(
+        f"| model `stand-in-tied`, at the rules' hold rate and at 1%: above a tie of {n} "
+        "| 0.00% (0) |"
+    )
+    assert lines[4].startswith(
+        f"| model `stand-in-tied`, at the rules' hold rate and at 1%: with the tie of {n} "
+        f"| 100.00% ({n}) |"
+    )

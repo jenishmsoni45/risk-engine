@@ -1,5 +1,5 @@
 """`make backtest`: the PaySim rule set against the model on the test days (design.md section 8;
-D40q, D54, D57.3, D58k).
+D40q, D54, D57.3, D58k, D59).
 
 1. The loader's transfers get their 31 features from the offline pipeline, and D38's split picks
    the test days, which neither the model nor the rule set has seen.
@@ -8,10 +8,11 @@ D40q, D54, D57.3, D58k).
    held (D54).
 3. The model in `ml/model/`, checked as the decision API checks it (D58b), scores each test
    transfer.
-4. Three lines, each with recall, fraud value caught and false-positive rate: the rules at their
-   own hold rate; the model holding at most as many, its highest scores; and the model holding
-   at most 1% of the test days' transfers. The model's lines are drawn on the test days' scores
-   by D55.3's rule, so a tie at a line makes it hold fewer, never more (D57.3).
+4. Lines with recall, fraud value caught and false-positive rate: the rules at their own hold
+   rate; the model holding as many, its highest scores; and the model holding 1% of the test
+   days' transfers. When transfers sharing the model's score at a line straddle the count, no
+   line holds exactly that many, so the model is shown on both sides of the tie: holding those
+   above it, and holding the tie as well (D59). No tie is broken.
 
 The rule file and the model must both come from the CSV given: the backtest refuses a file whose
 SHA-256 differs from the ones they name. It writes `ml/reports/backtest.md` and
@@ -76,7 +77,11 @@ class Line:
     """One line of the comparison, with what it holds counted."""
 
     who: str  # "rules" or "model"
-    rate: str  # "own", "rules", or "1%": whose hold rate the line holds at most
+    rate: str  # "own", "rules" or "1%": the hold rate the line is drawn for
+    # "exact" when it holds exactly that many; else "above" or "with" a tie that straddles the
+    # count: holding those scoring above the tie, or the tie as well (D59).
+    side: str
+    tied: int  # transfers sharing the score at the line when side isn't "exact"; else 0
     threshold: float | None  # the model's line; None for the rules, or when it holds nothing
     counts: AtThreshold
 
@@ -130,12 +135,38 @@ def rule_holds(rules: ruleset.RuleSet, x: Rows) -> npt.NDArray[np.bool_]:
     )
 
 
-def _model_line(rate: str, scores: Scores, at_most: int, fraud: Flags, amount: Cents) -> Line:
-    """The model holding at most at_most transfers, by D55.3's rule on these scores."""
-    threshold = threshold_for(scores, at_most)
-    hold = held(scores, threshold)
-    return Line(
-        "model", rate, None if np.isinf(threshold) else threshold, counts(hold, fraud, amount)
+def model_lines(
+    rate: str, scores: Scores, count: int, fraud: Flags, amount: Cents
+) -> tuple[Line, ...]:
+    """The model holding exactly `count` transfers, its highest scores; or, when the transfers
+    sharing the score at the line straddle `count`, the model on both sides of that tie (D59)."""
+    above = threshold_for(scores, count)  # the lowest line holding at most `count` (D55.3)
+    hold = held(scores, above)
+    below_line = scores < above
+    if int(hold.sum()) == count or not below_line.any():
+        threshold = None if np.isinf(above) else above
+        return (Line("model", rate, "exact", 0, threshold, counts(hold, fraud, amount)),)
+    # Fewer than `count` score at or above the line, and more score at or above the next score
+    # down, so the transfers sharing that score straddle `count`.
+    tie_score = float(scores[below_line].max())
+    tied = int((scores == tie_score).sum())
+    return (
+        Line(
+            "model",
+            rate,
+            "above",
+            tied,
+            None if np.isinf(above) else above,
+            counts(hold, fraud, amount),
+        ),
+        Line(
+            "model",
+            rate,
+            "with",
+            tied,
+            tie_score,
+            counts(held(scores, tie_score), fraud, amount),
+        ),
     )
 
 
@@ -171,9 +202,9 @@ def run(
     if scores.shape != (len(test),) or not np.all(np.isfinite(scores)):
         raise BacktestError(f"the model gave no finite score for each of {len(test)} transfers")
     lines = (
-        Line("rules", "own", None, counts(stopped, test.fraud, test.amount)),
-        _model_line("rules", scores, int(stopped.sum()), test.fraud, test.amount),
-        _model_line("1%", scores, capacity(len(test)), test.fraud, test.amount),
+        Line("rules", "own", "exact", 0, None, counts(stopped, test.fraud, test.amount)),
+        *model_lines("rules", scores, int(stopped.sum()), test.fraud, test.amount),
+        *model_lines("1%", scores, capacity(len(test)), test.fraud, test.amount),
     )
     return Result(
         csv_name=csv.name,
@@ -197,8 +228,7 @@ def data(result: Result) -> dict[str, Any]:
 
 def from_data(document: dict[str, Any]) -> Result:
     lines = tuple(
-        Line(line["who"], line["rate"], line["threshold"], AtThreshold(**line["counts"]))
-        for line in document["lines"]
+        Line(**{**line, "counts": AtThreshold(**line["counts"])}) for line in document["lines"]
     )
     return Result(
         **{key: value for key, value in document.items() if key not in ("lines", "test_days")},
@@ -207,21 +237,32 @@ def from_data(document: dict[str, Any]) -> Result:
     )
 
 
-LABELS = {
-    ("rules", "own"): "PaySim rules (v{version}), at their own hold rate",
-    ("model", "rules"): "model `{model}`, at the rules' hold rate",
-    ("model", "1%"): "model `{model}`, at 1%",
-}
+RATES = {"own": "at their own hold rate", "rules": "at the rules' hold rate", "1%": "at 1%"}
+
+
+def _label(result: Result, line: Line, rates: list[str]) -> str:
+    at = " and ".join(RATES[rate] for rate in rates)
+    if line.who == "rules":
+        return f"PaySim rules (v{result.rules_version}), {at}"
+    side = {
+        "exact": "",
+        "above": f": above a tie of {line.tied}",
+        "with": f": with the tie of {line.tied}",
+    }[line.side]
+    return f"model `{result.model_name}`, {at}{side}"
 
 
 def comparison(result: Result) -> list[str]:
-    """The comparison as a Markdown table, for the report and for README.md."""
-    rows = []
+    """The comparison as a Markdown table, for the report and for README.md. The model's lines
+    for both rates are one row when they hold the same transfers."""
+    merged: dict[tuple[str, str, float | None, AtThreshold], tuple[Line, list[str]]] = {}
     for line in result.lines:
+        key = (line.who, line.side, line.threshold, line.counts)
+        merged.setdefault(key, (line, []))[1].append(line.rate)
+    rows = []
+    for line, rates in merged.values():
         c = line.counts
-        label = LABELS[(line.who, line.rate)].format(
-            version=result.rules_version, model=result.model_name
-        )
+        label = _label(result, line, rates)
         rows.append(
             (
                 label,
@@ -243,7 +284,8 @@ def report(result: Result) -> str:
             "",
             "Written by `make backtest` (`python -m ml.backtest`) together with "
             "`ml/reports/backtest.json`; every number below comes from that script (D29). "
-            "design.md section 8 and D40q set what it compares, and D57.3 sets the model's lines.",
+            "design.md section 8 and D40q set what it compares, and D57.3 and D59 set the "
+            "model's lines.",
             "",
             f"- Data: `{result.csv_name}`, SHA-256 `{result.csv_sha256}`",
             f"- Test days: {days} (D38), {first.transfers} transfers, of which fraud "
@@ -258,11 +300,11 @@ def report(result: Result) -> str:
             "",
             *comparison(result),
             "",
-            "- The rules hold what they hold; the model then holds at most as many of the test "
-            "days' transfers, those it scores highest, and then at most 1% of them. Each line is "
-            "the lowest score at which at most that many score at or above it, so transfers "
-            "sharing the score at a line all stay below it, and the model holds fewer, never more "
-            "(D55.3).",
+            "- The rules hold what they hold; the model then holds as many of the test days' "
+            "transfers, those it scores highest, and then 1% of them. Where transfers sharing "
+            "the model's score at a line straddle that count, no line holds exactly that many: "
+            "the model is shown above the tie, holding fewer, and with it, holding more, so the "
+            "count it is compared at lies between the two. No tie is broken (D59).",
             "- Recall is fraud held over all fraud; fraud value caught is the fraud amounts held "
             "over all fraud amounts; the false-positive rate is other transfers held over all "
             "other transfers.",
