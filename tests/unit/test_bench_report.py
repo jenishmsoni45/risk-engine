@@ -23,7 +23,15 @@ from risk.features.events import parse_event
 from risk.timestamps import epoch_ms
 
 
-def summary(p50: float, p99: float, count: int, failed: float, dropped: int = 0) -> dict[str, Any]:
+def summary(
+    p50: float,
+    p99: float,
+    count: int,
+    failed: float,
+    dropped: int = 0,
+    run_ms: float | None = 180_000.5,
+) -> dict[str, Any]:
+    """k6's summary of a step; run_ms is how long k6 says it ran, None for a summary without it."""
     metrics: dict[str, Any] = {
         "http_req_duration": {"values": {"p(50)": p50, "p(99)": p99}},
         "http_reqs": {"values": {"count": count}},
@@ -31,11 +39,19 @@ def summary(p50: float, p99: float, count: int, failed: float, dropped: int = 0)
     }
     if dropped:
         metrics["dropped_iterations"] = {"values": {"count": dropped}}
-    return {"metrics": metrics}
+    document: dict[str, Any] = {"metrics": metrics}
+    if run_ms is not None:
+        document["state"] = {"testRunDurationMs": run_ms}
+    return document
 
 
 def conditions(
-    scenario: str, *, clean: bool = True, step: int = 180, model: str | None = "lgbm-test"
+    scenario: str,
+    *,
+    clean: bool = True,
+    step: int = 180,
+    model: str | None = "lgbm-test",
+    power: str | None = "ac",
 ) -> dict[str, Any]:
     return {
         "scenario": scenario,
@@ -43,6 +59,7 @@ def conditions(
         "git_clean": clean,
         "rule_set_version": 1,
         "shadow_model": model,
+        "power": power,
         "host": {"cpu": "Test CPU", "cpus": 10, "memory_bytes": 16 * 1024**3, "os": "TestOS 1"},
         "docker": {"version": "29.0", "vm_cpus": 5, "vm_memory_bytes": 8 * 1024**3},
         "k6": "k6 v2.3.0 (commit/devel)",
@@ -181,10 +198,19 @@ def test_the_conditions_are_listed(results: Path) -> None:
     block, _ = report.render(results)
     assert "Test CPU, 10 cores, 16 GiB" in block
     assert (
-        "`direct`: Test CPU, 10 cores, 16 GiB, TestOS 1; Docker 29.0, its VM 5 CPUs and 8.0 GiB; "
-        "commit `0123456`, rule set v1, shadow model `lgbm-test`; k6 v2.3.0; steps of 180 s."
+        "`direct`: Test CPU, 10 cores, 16 GiB, TestOS 1, on AC power; Docker 29.0, its VM 5 CPUs "
+        "and 8.0 GiB; commit `0123456`, rule set v1, shadow model `lgbm-test`; k6 v2.3.0; steps "
+        "of 180 s."
     ) in block
     assert "rule set v1, shadow off; k6 v2.3.0" in block
+
+
+def test_a_host_whose_power_source_is_unknown_says_nothing_of_it(results: Path) -> None:
+    """Results from before D60, or from a host without pmset, carry no power source."""
+    write(results, "conditions-direct.json", conditions("direct", power=None))
+    block, problems = report.render(results)
+    assert "`direct`: Test CPU, 10 cores, 16 GiB, TestOS 1; Docker 29.0" in block
+    assert problems == []
 
 
 def test_results_from_before_shadow_scoring_read_as_off(results: Path) -> None:
@@ -348,6 +374,103 @@ def test_results_from_a_dirty_tree_or_short_steps_never_go_in_the_readme(
     assert readme.read_text() == f"intro\n{report.START}\n{report.END}\n"
     _, problems = report.render(results)
     assert any(problem in p for p in problems)
+
+
+def refused(results: Path, tmp_path: Path) -> bool:
+    """Whether `make report` refuses these results, leaving README.md as it was."""
+    readme = tmp_path / "README.md"
+    blocks = f"{report.START}\n{report.END}\n{report.START_2B}\n{report.END_2B}\n"
+    readme.write_text(blocks)
+    code = report.main([*no_backtest(tmp_path, results), "--write", str(readme)])
+    return code == 1 and readme.read_text() == blocks
+
+
+@pytest.mark.parametrize(
+    ("run_ms", "problem"),
+    [
+        # The first 2026-11-08 run: the host slept for 22 minutes inside an 800/s step (D60).
+        (1_480_761.753, "direct-00050rps ran for 1480.8 s, not its 180 s step"),
+        (189_500.0, "direct-00050rps ran for 189.5 s, not its 180 s step"),
+        (170_000.0, "direct-00050rps ran for 170.0 s, not its 180 s step"),
+        (None, "direct-00050rps's k6 summary doesn't say how long it ran"),
+    ],
+    ids=["slept", "just over 5% long", "short", "no run time"],
+)
+def test_a_step_that_ran_off_its_length_never_goes_in_the_readme(
+    results: Path, tmp_path: Path, run_ms: float | None, problem: str
+) -> None:
+    k6 = summary(2.0, 6.0, 9000, 0.0, run_ms=run_ms)
+    rate_step(results, "direct", 50, k6, decisions=9000, shadow_scored=8991)
+    _, problems = report.render(results)
+    assert problems == [problem]
+    assert refused(results, tmp_path)
+
+
+def test_a_step_a_little_long_while_k6_waits_for_requests_in_flight_is_accepted(
+    results: Path,
+) -> None:
+    """An overloaded step runs on while k6 waits for its last requests: 182.3 s, as the stub's
+    800/s step did on 2026-11-03, is within 5%."""
+    k6 = summary(5.0, 9.0, 9000, 0.001, run_ms=182_273.53)
+    rate_step(results, "stub", 50, k6, **STUB_STACK)
+    _, problems = report.render(results)
+    assert problems == []
+
+
+@pytest.mark.parametrize(
+    ("change", "problem"),
+    [
+        ({"step_power": {"start": "ac", "end": "battery"}}, "direct-00050rps ran on battery"),
+        ({"step_power": {"start": "battery", "end": "ac"}}, "direct-00050rps ran on battery"),
+        ({"scenario_power": "battery"}, "direct started on battery"),
+    ],
+    ids=["unplugged during a step", "plugged in during a step", "scenario"],
+)
+def test_results_from_a_host_on_battery_never_go_in_the_readme(
+    results: Path, tmp_path: Path, change: dict[str, Any], problem: str
+) -> None:
+    if "step_power" in change:
+        k6 = summary(2.0, 6.0, 9000, 0.0)
+        power = change["step_power"]
+        rate_step(results, "direct", 50, k6, decisions=9000, shadow_scored=8991, power=power)
+    else:
+        write(results, "conditions-direct.json", conditions("direct", power="battery"))
+    _, problems = report.render(results)
+    assert problems == [problem]
+    assert refused(results, tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("pmset", "power"),
+    [
+        (
+            "Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t51%; AC attached; not "
+            "charging present: true",
+            "ac",
+        ),
+        (
+            "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=1)\t70%; discharging; "
+            "(no estimate) present: true",
+            "battery",
+        ),
+        ("", None),  # no pmset: not macOS, or the command failed
+        ("Now drawing from 'UPS Power'\n", None),
+    ],
+    ids=["ac", "battery", "no pmset", "something else"],
+)
+def test_the_power_source_is_read_from_pmset(pmset: str, power: str | None) -> None:
+    assert run.power_from(pmset) == power
+
+
+def test_the_bench_wont_start_on_battery(monkeypatch: pytest.MonkeyPatch) -> None:
+    """It refuses before it touches Docker or writes a results folder."""
+    monkeypatch.setattr(run, "power_source", lambda: "battery")
+
+    def no_docker() -> bool:
+        raise AssertionError("the bench went on past the power check")
+
+    monkeypatch.setattr(run, "normal_stack_running", no_docker)
+    assert run.main([]) == 2
 
 
 def test_check_passes_after_write_and_fails_after_an_edit(results: Path, tmp_path: Path) -> None:

@@ -17,8 +17,9 @@ It reads the newest folder under bench/results/ (or --results) and ml/reports/ba
   stayed within 50 ms with it on at every rate below the one where it crossed with it off
   (Phase 8, criterion 4).
 
-Every number in either block comes from those files. Results from a dirty tree or from shortened
-steps are printed but never written to, or accepted in, README.md.
+Every number in either block comes from those files. Results from a dirty tree, from shortened
+steps, from a step k6 ran for more than 5% longer or shorter than its length, or from a host on
+battery are printed but never written to, or accepted in, README.md (D60).
 """
 
 from __future__ import annotations
@@ -40,6 +41,10 @@ END = "<!-- bench:end -->"
 START_2B = "<!-- 2b:start -->"
 END_2B = "<!-- 2b:end -->"
 PLAN_STEP_SECONDS = 180  # D40o
+# How far k6's own run time may stray from the step (D60). An overloaded step runs a little long
+# while k6 waits for requests still in flight; a host that sleeps runs it far longer.
+RUN_TIME_SLACK = 0.05
+POWER = {"ac": "on AC power", "battery": "on battery"}
 BUDGET_MS = 50.0
 CROSSED = "p99 passed 50 ms"
 
@@ -66,7 +71,9 @@ def steps(folder: Path, scenario: str) -> list[dict[str, Any]]:
         step = load(path)
         if step["scenario"] != scenario:  # direct-* also matches direct-off's files
             continue
-        step["k6"] = load(folder / step["summary"])["metrics"]
+        summary = load(folder / step["summary"])
+        step["k6"] = summary["metrics"]
+        step["k6_run_ms"] = summary.get("state", {}).get("testRunDurationMs")
         found.append(step)
     key = "preloaded" if scenario == "hot" else "rate"
     return sorted(found, key=lambda s: int(s[key]))
@@ -241,10 +248,11 @@ def conditions_line(c: dict[str, Any]) -> str:
     gib = 1024**3
     model = c.get("shadow_model")
     shadow = f"shadow model `{model}`" if model else "shadow off"
+    power = f", {POWER[c['power']]}" if c.get("power") in POWER else ""
     return (
         f"`{c['scenario']}`: {host['cpu']}, {host['cpus']} cores, "
-        f"{host['memory_bytes'] / gib:.0f} GiB, {host['os']}; Docker {docker['version']}, its VM "
-        f"{docker['vm_cpus']} CPUs and {docker['vm_memory_bytes'] / gib:.1f} GiB; commit "
+        f"{host['memory_bytes'] / gib:.0f} GiB, {host['os']}{power}; Docker {docker['version']}, "
+        f"its VM {docker['vm_cpus']} CPUs and {docker['vm_memory_bytes'] / gib:.1f} GiB; commit "
         f"`{c['git_commit'][:7]}`, rule set v{c['rule_set_version']}, {shadow}; "
         f"{c['k6'].split(' (')[0]}; steps of {c['procedure']['step_seconds']} s."
     )
@@ -258,6 +266,21 @@ def _conditions(folder: Path) -> dict[str, dict[str, Any]]:
     return {path.stem.split("-", 1)[1]: load(path) for path in folder.glob("conditions-*")}
 
 
+def step_problems(step: dict[str, Any], step_s: int) -> list[str]:
+    """Why a step's numbers can't be trusted (D60): k6 ran it for more than 5% longer or shorter
+    than its step, as when the host sleeps, or the host was on battery at its start or end."""
+    name = step["summary"].removesuffix(".json")
+    problems = []
+    ran_ms = step.get("k6_run_ms")
+    if ran_ms is None:
+        problems.append(f"{name}'s k6 summary doesn't say how long it ran")
+    elif abs(ran_ms - step_s * 1000) > RUN_TIME_SLACK * step_s * 1000:
+        problems.append(f"{name} ran for {ran_ms / 1000:.1f} s, not its {step_s} s step")
+    if "battery" in (step.get("power") or {}).values():
+        problems.append(f"{name} ran on battery")
+    return problems
+
+
 def render(folder: Path) -> tuple[str, list[str]]:
     """The README bench block for a results folder, and why it can't go in README.md (if it
     can't)."""
@@ -268,6 +291,10 @@ def render(folder: Path) -> tuple[str, list[str]]:
             problems.append(f"{scenario} ran from a tree with uncommitted changes")
         if c["procedure"]["step_seconds"] != PLAN_STEP_SECONDS:
             problems.append(f"{scenario}'s steps were {c['procedure']['step_seconds']} s")
+        if c.get("power") == "battery":
+            problems.append(f"{scenario} started on battery")
+        for step in steps(folder, scenario):
+            problems += step_problems(step, c["procedure"]["step_seconds"])
     out = [
         START,
         f"<!-- Made by `make report` from `{_relative(folder)}/`; `make check-readme` fails if "

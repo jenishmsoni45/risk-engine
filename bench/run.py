@@ -17,9 +17,11 @@ both use the same ports. Every scenario but direct-off runs with the shadow mode
   attempt on its sender: a hot sender's window would grow with the bench's own requests.
 
 Each step writes k6's summary and a file of what the stack saw (decisions, how many held a shadow
-score, feature lag, consumer offset lag, the stub's backup answers, the hot window's size); each
-scenario writes a conditions file, which names the shadow model or null. Everything goes to
-bench/results/<UTC date>/, and bench/report.py makes the README's tables from it.
+score, feature lag, consumer offset lag, the stub's backup answers, the hot window's size) and
+whether the host was on AC power at its start and end; each scenario writes a conditions file,
+which names the shadow model or null. Everything goes to bench/results/<UTC date>/, and
+bench/report.py makes the README's tables from it. The bench won't start on battery, since the
+report refuses results from it (D60).
 
     uv run --locked python -m bench.run [direct-off] [direct] [stub] [hot]
 
@@ -247,6 +249,23 @@ def quiet(args: Sequence[str]) -> str:
         return ""
 
 
+def power_from(pmset: str) -> str | None:
+    """ "ac" or "battery", from the first line of macOS's `pmset -g batt`; None when it says
+    neither, or when the command isn't there (D60)."""
+    first = pmset.splitlines()[0] if pmset else ""
+    if "'AC Power'" in first:
+        return "ac"
+    if "'Battery Power'" in first:
+        return "battery"
+    return None
+
+
+def power_source() -> str | None:
+    """What the host runs on now. A run on battery is slower in ways the bench can't control, so
+    the report refuses it, and `make bench` won't start on it (D60)."""
+    return power_from(quiet(["pmset", "-g", "batt"]))
+
+
 def tree_clean(root: Path = ROOT) -> bool:
     """Whether the tree matches its commit, leaving out bench/results/, where a run's earlier
     scenarios have already written their files. False when git itself fails."""
@@ -277,6 +296,8 @@ def conditions(scenario: str, step_s: int, shadow: bool) -> dict[str, Any]:
         "rule_set_sha256": rules.sha256,
         # The model the API was given; each step's file counts the decisions it scored.
         "shadow_model": json.loads(MODEL_META.read_text())["name"] if shadow else None,
+        # Each step's file records it again at its start and end (D60).
+        "power": power_source(),
         "host": {
             "cpu": quiet(["sysctl", "-n", "machdep.cpu.brand_string"]) or platform.processor(),
             "cpus": os.cpu_count(),
@@ -371,7 +392,9 @@ def rate_steps(out: Path, scenario: str, step_s: int) -> None:
         name = f"{scenario}-{rate:05d}rps"
         transfers_before = counter_total(STUB_URL, "stub_transfers_total")
         backups_before = counter_total(STUB_URL, "stub_backup_answers_total")
+        power_at_start = power_source()
         summary, started, ended = k6_step(out, name, target, base_url, rate, step_s)
+        power = {"start": power_at_start, "end": power_source()}
         rows = decisions_between(started, ended + timedelta(seconds=1))
         lags = [row.lag_ms for row in rows if row.lag_ms is not None]
         transfers = counter_total(STUB_URL, "stub_transfers_total") - transfers_before
@@ -397,6 +420,7 @@ def rate_steps(out: Path, scenario: str, step_s: int) -> None:
                 "consumer_offset_lag_at_end": consumer_offset_lag(),
                 "stub_transfers": int(transfers),
                 "stub_backup_answers": int(backups),
+                "power": power,
                 "stopped": stop,
             },
         )
@@ -483,9 +507,11 @@ def hot_steps(out: Path, step_s: int) -> None:
         preload(hot, loaded, size)
         loaded = size
         name = f"hot-{size:07d}"
+        power_at_start = power_source()
         summary, started, ended = k6_step(
             out, name, "hot", API_URL, HOT_RATE, step_s, HOT_RECEIVER=str(hot)
         )
+        power = {"start": power_at_start, "end": power_source()}
         rows = decisions_between(started, ended + timedelta(seconds=1))
         windows = [sum(row.features[f] for f in WINDOW_FEATURES) for row in rows]
         result = outcome_of(summary, HOT_RATE, step_s)
@@ -506,6 +532,7 @@ def hot_steps(out: Path, step_s: int) -> None:
                     "min": min(windows) if windows else None,
                     "max": max(windows) if windows else None,
                 },
+                "power": power,
                 "stopped": stop,
             },
         )
@@ -530,6 +557,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if unknown:
         parser.error(f"unknown scenarios {unknown}; choose from {list(SCENARIOS)}")
     step_s = int(os.environ.get("BENCH_STEP_SECONDS") or STEP_S)
+    if power_source() == "battery":
+        print("The host is on battery, and the report refuses results from it: plug in first.")
+        return 2
     if normal_stack_running():
         print("The normal stack is running and uses the same ports: run `make down` first.")
         return 2
