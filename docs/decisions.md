@@ -613,6 +613,13 @@ Choices made within D39, D40q, D51.4, D55, D56 and D57, shown to the owner with 
 - Answer: **both sides of the tie** (owner). At each line, when the transfers sharing the score at the line straddle the count, the backtest reports the model holding those above the tie and the model holding the tie as well, and how many share the score; otherwise one line, holding exactly the count. Nothing is guessed and no tie is broken. This replaces "the model holds those scoring at or above the lowest score at which at most ⌊n / 100⌋ do, D55.3's rule" in D57.3's answer, and the same for the rules' rate; the rest of D57.3 stands. D55.3 still sets the model's threshold.
 - Doc changes (owner approved): design.md section 8 (backtest), requirements.md US15.1, and phases.md Phase 8 criterion 3 to match.
 
+### D60. A bench the host can't spoil (2026-11-08)
+
+- Found by Phase 8's first full `make bench`: k6 ran the shadow-on direct run's 800/s step for 1480.8 s instead of 180 s, because the Mac slept with its lid closed during it. The whole session ran on battery, and the Mac was in use during the shadow-off run. The report accepted all of it, since it checked only the planned step length. A second session, on battery but idle and awake, put the shadow-off crossing back at 2a's rate and the shadow-on crossing a step lower. A shorter check on AC power, with today's code and shadow on, then held 800/s within 50 ms. So power, not the code, is the first suspect, and the bench has to rule it out.
+- Options: a report that refuses a step k6 ran for more than 5% longer or shorter than its length, and a run on battery, with `make bench` refusing to start on battery; only the run-time check; no change, with care taken by hand.
+- Answer: **refuse both** (owner). Each step's file records whether the host was on AC power at the step's start and end (`pmset -g batt`, built into macOS), and each scenario's conditions file at its start. The report refuses a step or a scenario on battery, and a step whose k6 run time is more than 5% off its length; an overloaded step runs a little long while k6 waits for its last requests, which 5% allows. `make bench` won't start on battery. The conditions line in README names the power source when it is known. The bench runs on AC power, with the lid open and the Mac otherwise idle, under `caffeinate -i`, which is built into macOS and ends with the command.
+- Doc change, awaiting the owner's approval: design.md section 12's recording bullet, to name the power source and the two refusals.
+
 ## Open questions
 
 None. Every question from PLAN.md section 5 and every question found since is answered above.
