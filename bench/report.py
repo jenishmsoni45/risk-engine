@@ -178,6 +178,12 @@ def scored(step: dict[str, Any]) -> str:
     return percent(step["shadow_scored"] / step["decisions"])
 
 
+def added(on: float, off: float) -> str:
+    """On minus off, from the values the table shows, so that a reader subtracting them gets the
+    same number."""
+    return f"{float(ms(on)) - float(ms(off)):+.1f}"
+
+
 def shadow_cost_table(off: list[dict[str, Any]], on: list[dict[str, Any]]) -> list[str]:
     """p50 and p99 with the model off and on at each rate both runs reached, and the difference
     (D57.2); then whether p99 stayed within 50 ms with it on below the rate where it crossed with
@@ -194,8 +200,8 @@ def shadow_cost_table(off: list[dict[str, Any]], on: list[dict[str, Any]]) -> li
         p50_off, p99_off = p50_p99(r)
         p50_on, p99_on = p50_p99(by_rate[r["rate"]])
         lines.append(
-            f"| {r['rate']} | {ms(p50_off)} | {ms(p50_on)} | {p50_on - p50_off:+.1f} "
-            f"| {ms(p99_off)} | {ms(p99_on)} | {p99_on - p99_off:+.1f} "
+            f"| {r['rate']} | {ms(p50_off)} | {ms(p50_on)} | {added(p50_on, p50_off)} "
+            f"| {ms(p99_off)} | {ms(p99_on)} | {added(p99_on, p99_off)} "
             f"| {scored(by_rate[r['rate']])} |"
         )
     return [*lines, "", *budget_sentences(off, on)]

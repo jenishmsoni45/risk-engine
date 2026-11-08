@@ -279,7 +279,8 @@ def test_the_2b_block_holds_the_backtest_and_the_shadow_cost(results: Path, tmp_
     )
     # Added latency is on minus off, at each rate both runs reached; Scored is the on run's.
     assert "| 50 | 1.5 | 2.0 | +0.5 | 5.0 | 6.0 | +1.0 | 99.90% |" in block
-    assert "| 100 | 1.8 | 2.5 | +0.8 | 7.0 | 61.2 | +54.2 | 100.00% |" in block
+    # p50 off is 1.75, shown as 1.8: the added p50 is 2.5 - 1.8 as shown, not 0.75 rounded up.
+    assert "| 100 | 1.8 | 2.5 | +0.7 | 7.0 | 61.2 | +54.2 | 100.00% |" in block
     assert "| 200 |" not in block
 
 
