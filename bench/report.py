@@ -12,14 +12,19 @@ It reads the newest folder under bench/results/ (or --results) and ml/reports/ba
   50 ms (or, when errors or the arrival rate gave out first, the highest rate held), the stub's
   timeout rate, the feature lag and the consumer's offset lag, and the hot account's p99 against
   its window size;
-- the 2b block: the backtest's comparison, and what the shadow model costs: p50 and p99 with it
-  off and on at each rate, the difference, the share of decisions it scored, and whether p99
-  stayed within 50 ms with it on at every rate below the one where it crossed with it off
-  (Phase 8, criterion 4).
+- the 2b block: the backtest's comparison, and what the shadow model costs, straight to the
+  decision API and through the stub: p50 and p99 with it off and on at each rate, the difference,
+  the share of decisions it scored, and whether p99 stayed within 50 ms with it on at every rate
+  below the one where it crossed with it off (Phase 8, criterion 4, on the direct path).
+
+A step that passed a limit was run once more (D61). The tables show both attempts, and the repeat
+decides: the run stopped at a rate only if the repeat passed a limit too, and the shadow cost
+compares the repeats.
 
 Every number in either block comes from those files. Results from a dirty tree, from shortened
-steps, from a step k6 ran for more than 5% longer or shorter than its length, or from a host on
-battery are printed but never written to, or accepted in, README.md (D60).
+steps, from a step k6 ran for more than 5% longer or shorter than its length, from a host on
+battery, or from a scenario that stopped without running its last step again are printed but
+never written to, or accepted in, README.md (D60, D61).
 """
 
 from __future__ import annotations
@@ -45,7 +50,6 @@ PLAN_STEP_SECONDS = 180  # D40o
 # while k6 waits for requests still in flight; a host that sleeps runs it far longer.
 RUN_TIME_SLACK = 0.05
 POWER = {"ac": "on AC power", "battery": "on battery"}
-BUDGET_MS = 50.0
 CROSSED = "p99 passed 50 ms"
 
 
@@ -75,8 +79,54 @@ def steps(folder: Path, scenario: str) -> list[dict[str, Any]]:
         step["k6"] = summary["metrics"]
         step["k6_run_ms"] = summary.get("state", {}).get("testRunDurationMs")
         found.append(step)
-    key = "preloaded" if scenario == "hot" else "rate"
-    return sorted(found, key=lambda s: int(s[key]))
+    key = size_key(scenario)
+    return sorted(found, key=lambda s: (int(s[key]), attempt(s)))
+
+
+def size_key(scenario: str) -> str:
+    """What a scenario's steps grow: the rate, or the hot account's window."""
+    return "preloaded" if scenario == "hot" else "rate"
+
+
+def attempt(step: dict[str, Any]) -> int:
+    """1, or 2 for the repeat of a step that passed a limit (D61); results from before D61 hold
+    first attempts only."""
+    return int(step.get("attempt", 1))
+
+
+def deciding(rows: list[dict[str, Any]], key: str = "rate") -> list[dict[str, Any]]:
+    """One step per rate or window size, from rows sorted by it and then by attempt: the repeat
+    where there is one, since it decides whether the run stopped there (D61)."""
+    last: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        last[row[key]] = row
+    return list(last.values())
+
+
+def label(step: dict[str, Any], key: str = "rate") -> str:
+    """A table's first cell: the rate or window size, and whether this is the repeat."""
+    return f"{step[key]}, again" if attempt(step) == 2 else str(step[key])
+
+
+def listing(values: list[int]) -> str:
+    """200; 200 and 400; 200, 400 and 800."""
+    words = [str(v) for v in values]
+    return words[0] if len(words) == 1 else f"{', '.join(words[:-1])} and {words[-1]}"
+
+
+def held_on_repeat(rows: list[dict[str, Any]], key: str = "rate") -> list[int]:
+    """The rates or sizes whose first attempt passed a limit and whose repeat held (D61)."""
+    return [r[key] for r in rows if attempt(r) == 2 and r.get("stopped") is None]
+
+
+def repeat_note(rows: list[dict[str, Any]], unit: str, key: str = "rate") -> list[str]:
+    held = held_on_repeat(rows, key)
+    if not held:
+        return []
+    return [
+        f"Run again after passing a limit, and held the second time: {listing(held)} {unit}. "
+        "The run went on from there."
+    ]
 
 
 def ms(value: float) -> str:
@@ -110,7 +160,8 @@ def dropped(step: dict[str, Any]) -> int:
 
 
 def crossing(rows: list[dict[str, Any]], unit: str) -> str:
-    """The sentence under a rate table (D40o)."""
+    """The sentence under a rate table (D40o), from the steps that decided each rate (D61)."""
+    rows = deciding(rows)
     if not rows:
         return "No steps were run."
     last = rows[-1]
@@ -133,10 +184,9 @@ def direct_table(rows: list[dict[str, Any]]) -> list[str]:
     ]
     for r in rows:
         p50, p99 = latency(r)
-        lines.append(
-            f"| {r['rate']} | {requests(r)} | {p50} | {p99} | {errors(r)} | {dropped(r)} |"
-        )
-    return [*lines, "", crossing(rows, "requests a second")]
+        lines.append(f"| {label(r)} | {requests(r)} | {p50} | {p99} | {errors(r)} | {dropped(r)} |")
+    unit = "requests a second"
+    return [*lines, "", crossing(rows, unit), *repeat_note(rows, unit)]
 
 
 def stub_table(rows: list[dict[str, Any]]) -> list[str]:
@@ -152,10 +202,11 @@ def stub_table(rows: list[dict[str, Any]]) -> list[str]:
         lag50 = "n/a" if lag["p50"] is None else str(lag["p50"])
         lag99 = "n/a" if lag["p99"] is None else str(lag["p99"])
         lines.append(
-            f"| {r['rate']} | {requests(r)} | {p50} | {p99} | {errors(r)} | {percent(timeouts)} "
+            f"| {label(r)} | {requests(r)} | {p50} | {p99} | {errors(r)} | {percent(timeouts)} "
             f"| {lag50} | {lag99} | {r['consumer_offset_lag_at_end']} |"
         )
-    return [*lines, "", crossing(rows, "transfers a second")]
+    unit = "transfers a second"
+    return [*lines, "", crossing(rows, unit), *repeat_note(rows, unit)]
 
 
 def hot_table(rows: list[dict[str, Any]]) -> list[str]:
@@ -166,16 +217,17 @@ def hot_table(rows: list[dict[str, Any]]) -> list[str]:
     for r in rows:
         p50, p99 = latency(r)
         lines.append(
-            f"| {r['preloaded']} | {r['members_read']['p50']} | {p50} | {p99} | {errors(r)} |"
+            f"| {label(r, 'preloaded')} | {r['members_read']['p50']} | {p50} | {p99} "
+            f"| {errors(r)} |"
         )
-    over = [r for r in rows if r.get("stopped")]
+    over = [r for r in deciding(rows, "preloaded") if r.get("stopped")]
     sentence = (
         f"p99 first passes 50 ms with **{over[0]['preloaded']} preloaded events** in the "
         "receiver's 24 h window."
         if over
         else "p99 stayed within 50 ms at every window size run."
     )
-    return [*lines, "", sentence]
+    return [*lines, "", sentence, *repeat_note(rows, "preloaded events", "preloaded")]
 
 
 def scored(step: dict[str, Any]) -> str:
@@ -191,15 +243,18 @@ def added(on: float, off: float) -> str:
     return f"{float(ms(on)) - float(ms(off)):+.1f}"
 
 
-def shadow_cost_table(off: list[dict[str, Any]], on: list[dict[str, Any]]) -> list[str]:
+def shadow_cost_table(
+    off: list[dict[str, Any]], on: list[dict[str, Any]], unit: str = "requests a second"
+) -> list[str]:
     """p50 and p99 with the model off and on at each rate both runs reached, and the difference
-    (D57.2); then whether p99 stayed within 50 ms with it on below the rate where it crossed with
-    it off (Phase 8, criterion 4)."""
+    (D57.2), from the step that decided each rate (D61); then whether p99 stayed within 50 ms with
+    it on below the rate where it crossed with it off (Phase 8, criterion 4)."""
     lines = [
         "| Rate (req/s) | p50 off (ms) | p50 on (ms) | Added p50 (ms) | p99 off (ms) "
         "| p99 on (ms) | Added p99 (ms) | Scored |",
         "|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
+    off, on = deciding(off), deciding(on)
     by_rate = {r["rate"]: r for r in on}
     for r in off:
         if r["rate"] not in by_rate:
@@ -211,11 +266,21 @@ def shadow_cost_table(off: list[dict[str, Any]], on: list[dict[str, Any]]) -> li
             f"| {ms(p99_off)} | {ms(p99_on)} | {added(p99_on, p99_off)} "
             f"| {scored(by_rate[r['rate']])} |"
         )
-    return [*lines, "", *budget_sentences(off, on)]
+    notes = []
+    for side, rows in (("off", off), ("on", on)):
+        held = held_on_repeat(rows)
+        if held:
+            notes.append(
+                f"With the model {side}, run again after passing a limit, and held the second "
+                f"time: {listing(held)} {unit}; the table shows the repeat."
+            )
+    return [*lines, "", *budget_sentences(off, on, unit), *notes]
 
 
-def budget_sentences(off: list[dict[str, Any]], on: list[dict[str, Any]]) -> list[str]:
-    unit = "requests a second"
+def budget_sentences(
+    off: list[dict[str, Any]], on: list[dict[str, Any]], unit: str = "requests a second"
+) -> list[str]:
+    off, on = deciding(off), deciding(on)
     crossed = [r["rate"] for r in off if r.get("stopped") == CROSSED]
     if crossed:
         first = f"With the model off, p99 first passes 50 ms at **{crossed[0]} {unit}**."
@@ -225,9 +290,11 @@ def budget_sentences(off: list[dict[str, Any]], on: list[dict[str, Any]]) -> lis
         first = f"With the model off, p99 never passed 50 ms. {crossing(off, unit)}"
         scope = "every rate the model-off run held"
         needed = [r["rate"] for r in off if r.get("stopped") is None]
-    measured = {r["rate"]: p50_p99(r)[1] for r in on}
+    measured = {r["rate"]: r for r in on}
     missing = [rate for rate in needed if rate not in measured]
-    over = [rate for rate in needed if rate in measured and measured[rate] > BUDGET_MS]
+    # A step within budget is one that held: its p99 within 50 ms, and its errors and dropped
+    # requests within 1%.
+    over = [rate for rate in needed if rate in measured and measured[rate].get("stopped")]
     if not needed:
         second = "No rate below it was run, so there is nothing to compare."
     elif missing:
@@ -235,8 +302,13 @@ def budget_sentences(off: list[dict[str, Any]], on: list[dict[str, Any]]) -> lis
             f"With it on, p99 wasn't measured at {', '.join(map(str, missing))} {unit}: "
             f"{crossing(on, unit)}"
         )
-    elif over:
+    elif over and measured[over[0]]["stopped"] == CROSSED:
         second = f"With it on, p99 passes 50 ms at {over[0]} {unit}, below that rate."
+    elif over:
+        second = (
+            f"With it on, the run stopped at {over[0]} {unit} because "
+            f"{measured[over[0]]['stopped']}, below that rate."
+        )
     else:
         span = f"{needed[0]} to {needed[-1]}" if len(needed) > 1 else str(needed[0])
         second = f"With it on, p99 stays within 50 ms at {scope}: {span} {unit}."
@@ -281,6 +353,16 @@ def step_problems(step: dict[str, Any], step_s: int) -> list[str]:
     return problems
 
 
+def unconfirmed(rows: list[dict[str, Any]], key: str) -> list[str]:
+    """Steps that stopped their run without being run again (D61), as results from before D61
+    or from a run cut off between the two attempts do."""
+    return [
+        f"{r['summary'].removesuffix('.json')} stopped its run without being run again"
+        for r in deciding(rows, key)
+        if r.get("stopped") is not None and attempt(r) == 1
+    ]
+
+
 def render(folder: Path) -> tuple[str, list[str]]:
     """The README bench block for a results folder, and why it can't go in README.md (if it
     can't)."""
@@ -293,8 +375,10 @@ def render(folder: Path) -> tuple[str, list[str]]:
             problems.append(f"{scenario}'s steps were {c['procedure']['step_seconds']} s")
         if c.get("power") == "battery":
             problems.append(f"{scenario} started on battery")
-        for step in steps(folder, scenario):
+        found = steps(folder, scenario)
+        for step in found:
             problems += step_problems(step, c["procedure"]["step_seconds"])
+        problems += unconfirmed(found, size_key(scenario))
     out = [
         START,
         f"<!-- Made by `make report` from `{_relative(folder)}/`; `make check-readme` fails if "
@@ -340,12 +424,18 @@ def render_2b(folder: Path, backtest: Path) -> str:
         ]
     else:
         out.append("No backtest yet: run `make backtest`.")
-    out += ["", "#### What the shadow model costs, straight to the decision API", ""]
     conditions = _conditions(folder)
-    if "direct-off" in conditions and "direct" in conditions:
-        out += shadow_cost_table(steps(folder, "direct-off"), steps(folder, "direct"))
-    else:
-        out.append("No run with the model off and on in these results: run `make bench`.")
+    paths = (
+        ("direct", "straight to the decision API", "requests a second"),
+        ("stub", "through the ledger stub", "transfers a second"),
+    )
+    for on, where, unit in paths:
+        off = f"{on}-off"
+        out += ["", f"#### What the shadow model costs, {where}", ""]
+        if off in conditions and on in conditions:
+            out += shadow_cost_table(steps(folder, off), steps(folder, on), unit)
+        else:
+            out.append("No run with the model off and on in these results: run `make bench`.")
     out += ["", END_2B]
     return "\n".join(out)
 
