@@ -204,15 +204,7 @@ What the tables show:
 - Shadow scoring costs no capacity. With the model on, the direct path and the path through the stub first pass 50 ms at the same rate as with it off, and every rate below that stays within the budget.
 - The added latency is smaller than the normal variation between runs, and at some rates p99 is even lower with the model on. One 3-minute step per rate shows that the cost is small, not exactly how small.
 
-## How it was built and verified
-
-[Claude Code](https://claude.com/claude-code) wrote this project's code, tests and docs under my plan and review. I wrote the brief ([PLAN.md](PLAN.md)) and the working rules ([CLAUDE.md](CLAUDE.md)), answered every design question, and accepted or changed every choice made without one.
-
-Phase 0 was planning only. Every open question came to me with options, trade-offs and a recommendation, and each answer went into [decisions.md](docs/decisions.md). The docs were written only once nothing was open, and from then on they were the source of truth: when code and docs disagreed, the docs won.
-
-After that, each phase started only when I named it. It was built against its acceptance criteria in [phases.md](docs/phases.md), with a test for every criterion, and became one pull request that I reviewed and merged myself. When a requirement couldn't be met as written, or the docs didn't settle something, the work stopped and the question came back to me. Those answers are the later entries in decisions.md.
-
-How it's verified:
+## How it's tested
 
 - I1 to I8 each have their own suite in `tests/invariants/`, several of them property tests with Hypothesis against an oracle that recomputes features from the raw event log. I7 runs on generated PaySim-format data in CI and on real transfers with `make parity`. I8 compares decisions with stand-in models that fail in every way, and the real model against an API with shadow scoring off.
 - The fault tests in `tests/adversarial/` pause or kill each service in turn (the API, Redis, Postgres, Kafka, the consumer), flush Redis and rebuild it, and flood the stack with repeated events, late events and concurrent requests sharing one `requestId`. Together they cover every row of design.md's failure table.

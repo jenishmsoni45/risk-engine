@@ -95,7 +95,7 @@ Phases 1 to 8 from PLAN.md section 6. Each phase is one PR, started only when th
 5. A flood of every event repeated, a flood of late events, and a burst of concurrent requests with one `requestId` (its size stated in the test) leave features and rows exactly as the oracle and I1 say. (`tests/adversarial/test_floods.py`)
 6. `make e2e` passes against real tally, on a fresh stack whose consumer group starts at the end of tally's topic: every decided entry's `decisionId` is in `decisions`, a held transfer gets tally's 403, and with the API stopped tally answers 503 `risk-unavailable`. (local only; output pasted in the PR)
 7. I1 to I5 run in CI.
-8. README.md (pitch, architecture, how to run, the numbers from the report script, how it was built and verified), `docs/postmortem.md` on one real bug found during the build, and the talk outline exist.
+8. README.md (pitch, architecture, how to run, the numbers from the report script, how it is tested; D62 dropped how it was built), `docs/postmortem.md` on one real bug found during the build, and the talk outline exist.
 
 **Out of scope.** Optimising throughput beyond measuring it; partitioning across machines (a talk topic only).
 

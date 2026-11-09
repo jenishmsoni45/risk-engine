@@ -639,6 +639,11 @@ Choices made while building D61. Row b was found in self-review and goes to the 
 | a | A repeat's files | `<step>-repeat.json` and `<step>-repeat-stack.json` beside the first attempt's; each step's file records its attempt, 1 or 2 | the report reads both attempts and orders them; results from before D61 read as first attempts |
 | b | Criterion 4's check | a rate below the model-off crossing is within budget only if the model-on step there held: p99 within 50 ms, and errors and dropped requests within 1%. Before, a step that stopped for errors counted whenever its p99 was within 50 ms | the report can't call a rate within budget where the model-on run stopped |
 
+### D62. README without the section on how it was built (2026-11-09)
+
+- Asked by the owner at the project's close: README's section on how the project was built, kept since D48.7, should go.
+- Answer: **remove it** (owner). README keeps the list of how the project is tested, under "How it's tested", and drops the paragraphs on how it was built. This replaces D48.7's answer, the "how it was built" part of Phase 5's criterion 8 (phases.md now says so), and that part of PLAN.md section 9's definition of done. Commit messages, PR titles and PR bodies still never mention it.
+
 ## Open questions
 
 None. Every question from PLAN.md section 5 and every question found since is answered above.
