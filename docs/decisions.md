@@ -565,6 +565,80 @@ Choices made within D34, D38, D51.4, D54 and D55, shown to the owner with D55's 
 | e | Metrics on the test days | the threshold from the threshold days, unchanged; the card also gives the share it holds on the test days. PR-AUC is average precision, computed in this repo with numpy | the test days stay unseen until scored; no further library |
 | f | Tests | no test on the Mac imports LightGBM. One integration test trains twice on generated data inside the image and checks that the two model files are identical | every test runs on the Mac and in CI, none skipped, and determinism is checked in CI |
 
+### D57. Phase 8's opening questions (2026-11-07)
+
+Five questions the docs didn't settle, asked before any Phase 8 code.
+
+1. **A slow model.** D39 scores in the request, before the row is stored, under the 60 ms deadline (design.md section 4). A model slow enough would push the decision past the deadline into a 503, so the model would change what the caller gets, which I8 forbids.
+   - Options: a 10 ms limit, with the model scored on its own worker thread; a 5 ms limit; no limit, scoring inline, which drops I8's slow-model case (a change to design.md).
+   - Answer: **a 10 ms limit** (owner). Scoring runs on one worker thread of the API; past 10 ms the row stores no score, the timeout is counted, and the decision goes on. A request whose wait has ended is dropped from the thread's queue before it runs, so a slow model can't pile up work. The limit is `SHADOW_TIMEOUT_MS`, default 10, in design.md 1.6.
+   - Consequences: a decision waits at most 10 ms for the model, inside its 60 ms deadline.
+2. **What the bench runs.** Phase 8 asks for the bench with shadow off and on, and for p99 within 50 ms with shadow on at every rate below the one where 2a's p99 crossed 50 ms. The committed results are from 2026-11-03, before D51.1 changed the consumer's loop, which D51.1 left for Phase 8's bench to measure.
+   - Options: every scenario again in one session on the phase's final commit (direct with shadow off and on, then stub and hot with shadow on); direct only, off and on, with README keeping the 2026-11-03 stub and hot tables; direct with shadow on only, compared with the 2026-11-03 run.
+   - Answer: **every scenario again, in one session** (owner). The shadow-off direct run is the baseline: the rate where its p99 first passes 50 ms is "the one where 2a's p99 crossed 50 ms" in Phase 8's criterion 4, and the model's added latency is shadow on minus shadow off at each rate, from the report script. All of README's tables then come from one run on one commit. design.md 12 now says so.
+3. **"The model at 1%" in the backtest** (D40q).
+   - Options: the test days' own 1% line; the threshold in `model.json`, set on the threshold days; both.
+   - Answer: **the test days' own 1% line** (owner): of the test days' n transfers, the model holds those scoring at or above the lowest score at which at most ⌊n / 100⌋ do, D55.3's rule, the same method that matches the rules' own hold rate. The model card already reports the shipped threshold on the test days.
+4. **How README's 2b numbers come from a script** (D29).
+   - Options: a block written by `make report` from the backtest's data file and the bench results, checked by `make check-readme` in CI; links to the reports, quoting no numbers.
+   - Answer: **a block written by a script** (owner). The backtest writes `ml/reports/backtest.json` beside its report; `make report` writes README's 2b block from it and from the bench results, and `make check-readme` fails if the block differs.
+5. **Shadow on by default.**
+   - Options: on, the API loading the committed model unless `SHADOW_MODEL_DIR` is empty; off unless set.
+   - Answer: **on by default** (owner). `make up`, CI and every test run with the committed model; `SHADOW_MODEL_DIR` set to empty turns shadow off, as the bench's shadow-off run does. design.md 1.6 now names the setting.
+
+### D58. Shadow and backtest choices (2026-11-07)
+
+Choices made within D39, D40q, D51.4, D55, D56 and D57, shown to the owner with D57's questions and accepted. The owner approved the doc changes with them: design.md 1.6 (two settings), section 2 (the shadow columns' checks), section 8 (shadow) and section 12 (shadow cost).
+
+| # | Choice | Value | Why |
+|---|---|---|---|
+| a | Where the model comes from | `ml/model/` is copied into the image; at startup the API loads `model.json` and `model.txt` from `SHADOW_MODEL_DIR`, default `ml/model` | the image carries exactly the model the card describes (D55.4) |
+| b | Load checks | `model.json` readable; its inputs exactly the 31 features in `FEATURE_NAMES` order; `model.txt`'s SHA-256 equal to `model.json`'s; LightGBM's feature names equal to the inputs. A failure is logged and the API starts without a model | design.md section 7: a missing or corrupt model leaves decisions unchanged |
+| c | What a row stores | shadow off: both columns null. A model loaded: its name always, and the score null when scoring fails. Shadow on but no model loaded: both null | the name tells "off" from "failed" whenever a model loaded; the counter and the startup log tell the rest |
+| d | A valid score | one finite number from 0 to 1, the range of LightGBM's binary objective; anything else is stored as null and counted | makes I8's "nonsense" exact |
+| e | Migration | `0005_shadow.sql`: `shadow_score double precision` and `shadow_model text`, both nullable, with checks that a score is null or from 0 to 1 and that a score has a model name | a row can't hold a score that no model gave |
+| f | Counter | `risk_shadow_failures_total`, by `reason`: `unavailable` (shadow on, no model loaded), `error`, `invalid`, `timeout` | design.md section 7's shadow error counter |
+| g | Replays | not scored again; a replay returns the stored row as before | one row, one score |
+| h | Scoring | one worker thread; the 31 features as float64 in `model.json`'s order; LightGBM predicts with one thread | float32 can't hold every amount in cents (ml/dataset.py); one OpenMP thread suits a single row |
+| i | I8 test | LightGBM can't load on the Mac (D51.4), so the test runs the decision path in the test process against the stack's Redis and Postgres with stand-in models (none, a working one, one that raises, one that returns nonsense, one that's slow) on identical Hypothesis-generated histories in separate accounts. A second check sends the same requests to the stack's API, with the real model, and to a second API with shadow off | the stand-ins cover every failure; the second check covers the real model |
+| j | `tests/integration/test_shadow.py` | rows from the stack's API hold `model.json`'s name and a score equal to LightGBM's score of the stored features, recomputed in the image; a second API started with a corrupt model stores null scores and counts them; a model that raises stores null and is counted | Phase 8's criterion 2 against the real model |
+| k | `make backtest` | runs `python -m ml.backtest` in the image (D51.4), in a Compose service like `model`'s; reads the CSV, `ml/rules/paysim.yaml` and `ml/model/`; refuses a CSV whose SHA-256 differs from the one the model and the rule file name; writes `ml/reports/backtest.md` and `ml/reports/backtest.json` | the comparison runs on the data the model and the rule set were built from |
+| l | Talk and video | `docs/talk.md` gains a 2b part; the 3-minute demo video is the owner's to record (PLAN.md section 9) | |
+| m | Dependencies | none added | |
+
+### D59. A tie at the backtest's line (2026-11-07)
+
+- Found by the first `make backtest` on the owner's CSV: on the test days' 67,944 transfers, 659 score above 0.03012039931478348 and 199 score exactly that, 57 of them fraud. The rules hold 786 and 1% is 679, so both lines fall inside the tie. By D55.3's rule, which D57.3 applied to the backtest, the model then held 659 at both lines, and US15's comparison at the same hold rate wasn't one: the model held 127 fewer transfers than the rules.
+- Options: show the model on both sides of a tie at the line; split the tie in proportion (the tied group's counts scaled by the share of it needed, what a random pick gives on average); keep D55.3's rule and name the tie in the report; break the tie by file order.
+- Answer: **both sides of the tie** (owner). At each line, when the transfers sharing the score at the line straddle the count, the backtest reports the model holding those above the tie and the model holding the tie as well, and how many share the score; otherwise one line, holding exactly the count. Nothing is guessed and no tie is broken. This replaces "the model holds those scoring at or above the lowest score at which at most ⌊n / 100⌋ do, D55.3's rule" in D57.3's answer, and the same for the rules' rate; the rest of D57.3 stands. D55.3 still sets the model's threshold.
+- Doc changes (owner approved): design.md section 8 (backtest), requirements.md US15.1, and phases.md Phase 8 criterion 3 to match.
+
+### D60. A bench the host can't spoil (2026-11-08)
+
+- Found by Phase 8's first full `make bench`: k6 ran the shadow-on direct run's 800/s step for 1480.8 s instead of 180 s, because the Mac slept with its lid closed during it. The whole session ran on battery, and the Mac was in use during the shadow-off run. The report accepted all of it, since it checked only the planned step length. A second session, on battery but idle and awake, put the shadow-off crossing back at 2a's rate and the shadow-on crossing a step lower. A shorter check on AC power, with today's code and shadow on, then held 800/s within 50 ms. So power, not the code, is the first suspect, and the bench has to rule it out.
+- Options: a report that refuses a step k6 ran for more than 5% longer or shorter than its length, and a run on battery, with `make bench` refusing to start on battery; only the run-time check; no change, with care taken by hand.
+- Answer: **refuse both** (owner). Each step's file records whether the host was on AC power at the step's start and end (`pmset -g batt`, built into macOS), and each scenario's conditions file at its start. The report refuses a step or a scenario on battery, and a step whose k6 run time is more than 5% off its length; an overloaded step runs a little long while k6 waits for its last requests, which 5% allows. `make bench` won't start on battery. The conditions line in README names the power source when it is known. The bench runs on AC power, with the lid open and the Mac otherwise idle, under `caffeinate -i`, which is built into macOS and ends with the command.
+- Doc change (owner approved, with D61): design.md section 12's recording bullet names the power source and the two refusals.
+
+### D61. A stop the bench confirms, and the stub path with the model off (2026-11-08)
+
+- Found by Phase 8's third full `make bench`, the first on AC power with the Mac idle and kept awake, and every step within 5% of its length. With shadow on, the direct run held 800/s (p99 10.2 ms) and crossed at 1,600/s, as 2a's did, so the battery run's failure at 800/s didn't come back (D60). But the shadow-off direct run stopped at 200/s (p99 92.7 ms, errors 1.03%) after holding 100/s at a p99 of 5.1 ms, with its slowest request at 0.74 s: a stall of a second or two, not a limit. One 3-minute step decides where a scenario stops, so one stall moved criterion 4's baseline. Separately, the stub run with shadow on crossed at 400/s (p99 257.8 ms) in this run and in the battery run, where 2a's held 400/s at a p99 of 7.3 ms. Shadow scoring and D51.1's consumer loop have both changed since 2a, and D57.2 runs the stub path with shadow on only, so the results can't tell the two apart.
+- Options: run a step again when it passes a limit, and add a stub run with shadow off; only run steps again; neither, and run the session again.
+- Answer: **both** (owner).
+  1. When a step passes a limit (p99 over 50 ms, errors over 1%, or k6 dropping more than 1% of its planned requests), or a hot step's p99 passes 50 ms, the bench runs the same rate or window size once more, straight away. The scenario stops only if the repeat passes a limit too; otherwise it goes on to the next rate or size. Both attempts are kept and README's tables show both. The repeat decides its rate: in the crossing, in the shadow cost and in criterion 4's check. The report keeps out of README a scenario whose last step stopped it without a repeat, as a run from before D61, or one cut off between the two attempts, would have. This replaces "doubling until p99 passes 50 ms or errors pass 1%" in D40o and the stop rule in D48.2 and D49 row a; the rest of each stands.
+  2. The session runs the stub scenario with shadow off, `stub-off`, after direct and before stub with shadow on. README's 2b block adds the shadow cost through the stub, on minus off at each rate, beside the direct path's. This adds to D57.2's answer; the shadow-off direct run stays criterion 4's baseline.
+- Why: a real limit fails twice in a row, while a stall of the host fails once. The stub runs with shadow off and on, on one commit, differ only in the model, so README can show whether the stub path's drop comes from the model.
+- Consequences: each scenario runs one more step at its stop, and the session one more scenario. The repeat starts straight after the first attempt, as each doubling does, with no time to settle: in the run above, the consumer's offset lag was 0 at the end of every step, the stub's 400/s step included.
+- Doc changes (owner approved): design.md section 12's decision latency, hot account and shadow cost bullets, and its recording bullet with D60's change.
+- Outcome: the session in `bench/results/2026-11-09/`, on commit `12eb438`, on AC power, every step within 5% of its length. Direct crossed at 1,600/s with shadow off and on, the stub path at 800/s with both, and the hot account at 10,000 events; every crossing failed on its repeat, and no step held on one. The stub path held 400/s with shadow off (p99 8.6 ms) and on (12.0 ms), so the earlier failures there didn't come back, and it crosses where 2a's did, with D51.1's consumer loop and with the model. Below its crossing, the stub path's feature lag p50 is from 104 to 117 ms, against 2a's 364 to 376 ms: D51.1's change cost no capacity.
+
+Choices made while building D61. Row b was found in self-review and goes to the owner with this change. No doc changes.
+
+| # | Choice | Value | Why |
+|---|---|---|---|
+| a | A repeat's files | `<step>-repeat.json` and `<step>-repeat-stack.json` beside the first attempt's; each step's file records its attempt, 1 or 2 | the report reads both attempts and orders them; results from before D61 read as first attempts |
+| b | Criterion 4's check | a rate below the model-off crossing is within budget only if the model-on step there held: p99 within 50 ms, and errors and dropped requests within 1%. Before, a step that stopped for errors counted whenever its p99 was within 50 ms | the report can't call a rate within budget where the model-on run stopped |
+
 ## Open questions
 
 None. Every question from PLAN.md section 5 and every question found since is answered above.

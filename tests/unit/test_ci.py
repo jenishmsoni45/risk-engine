@@ -1,6 +1,6 @@
-"""What CI runs (Phase 5, criterion 7): I1 to I5 run in CI, because CI runs `make test`, which runs
-pytest over tests/, where each invariant's test file sits without any skip; and CI checks that
-README.md's bench tables match the committed results.
+"""What CI runs (Phase 5 criterion 7, Phase 8 criterion 5): I1 to I8 run in CI, because CI runs
+`make test`, which runs pytest over tests/, where each invariant's test file sits without any
+skip; and CI checks that README.md's tables match the committed results.
 """
 
 from __future__ import annotations
@@ -19,6 +19,9 @@ INVARIANTS = {
     "I3": "test_i3_recompute.py",
     "I4": "test_i4_caller_never_hangs.py",
     "I5": "test_i5_decision_row.py",
+    "I6": "test_i6_point_in_time.py",
+    "I7": "test_i7_parity.py",
+    "I8": "test_i8_shadow.py",
 }
 
 

@@ -59,6 +59,20 @@ def lateness_margin_ms() -> int:
     return _int("LATENESS_MARGIN_SECONDS", 300, 0) * 1000
 
 
+def shadow_model_dir() -> Path | None:
+    """SHADOW_MODEL_DIR (D57.5, D58a): the folder of the model scored in shadow, `ml/model` when
+    unset. Set to empty, it turns shadow scoring off."""
+    value = os.environ.get("SHADOW_MODEL_DIR")
+    if value is None:
+        return Path("ml/model")
+    return Path(value) if value else None
+
+
+def shadow_timeout_ms() -> int:
+    """SHADOW_TIMEOUT_MS (D57.1): how long a decision waits for the model's score."""
+    return _int("SHADOW_TIMEOUT_MS", 10, 1)
+
+
 def consumer_metrics_port() -> int:
     """The consumer's GET /metrics port (D40z)."""
     return _int("CONSUMER_METRICS_PORT", 8002, 1)

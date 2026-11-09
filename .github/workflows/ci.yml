@@ -37,7 +37,7 @@ jobs:
       - name: Lint
         run: make lint
 
-      - name: README's bench tables match the committed results (Phase 5, criterion 2)
+      - name: README's tables match the committed results (Phase 5 criterion 2, Phase 8 criteria 3 and 4)
         run: make check-readme
 
       - name: Audit

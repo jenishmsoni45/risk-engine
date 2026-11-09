@@ -1,0 +1,24 @@
+{
+  "attempt": 1,
+  "consumer_offset_lag_at_end": 0,
+  "decisions": 30962,
+  "ended_at": "2026-11-09T02:14:41.459487Z",
+  "feature_lag_ms": {
+    "count": 0,
+    "max": null,
+    "p50": null,
+    "p99": null
+  },
+  "power": {
+    "end": "ac",
+    "start": "ac"
+  },
+  "rate": 1600,
+  "scenario": "direct",
+  "shadow_scored": 30925,
+  "started_at": "2026-11-09T02:11:41.198126Z",
+  "stopped": "p99 passed 50 ms",
+  "stub_backup_answers": 0,
+  "stub_transfers": 0,
+  "summary": "direct-01600rps.json"
+}

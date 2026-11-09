@@ -16,7 +16,7 @@ def test_an_invalid_rule_file_stops_the_api() -> None:
     try:
         # In the foreground: the call returns when the container exits, with its exit code.
         result = compose(
-            *api_run_args(name, RULE_FIXTURES / "unknown_feature.yaml"),
+            *api_run_args(name, rules_file=RULE_FIXTURES / "unknown_feature.yaml"),
             "--no-TTY",
             "api",
             check=False,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from ledger_stub.config import StubConfig
@@ -23,6 +25,8 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         "STUB_RELAY_POLL_MS",
         "STUB_RELAY_BATCH",
         "STUB_REPLAY",
+        "SHADOW_MODEL_DIR",
+        "SHADOW_TIMEOUT_MS",
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("DATABASE_URL", "postgresql://dummy@db/dummy")
@@ -33,6 +37,8 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.consumer_metrics_port() == 8002
     assert settings.consumer_group() == "risk-features"
     assert settings.consumer_start() == "earliest"
+    assert settings.shadow_model_dir() == Path("ml/model")
+    assert settings.shadow_timeout_ms() == 10
     assert StubConfig.from_env() == StubConfig(
         database_url="postgresql://dummy@db/dummy",
         kafka_bootstrap=settings.kafka_bootstrap(),
@@ -69,6 +75,8 @@ def test_a_relay_interval_of_zero_is_allowed(monkeypatch: pytest.MonkeyPatch) ->
         ("STUB_ON_TIMEOUT_DEFAULT", "deny"),
         ("CONSUMER_START", "end"),
         ("STUB_REPLAY", "yes"),
+        ("SHADOW_TIMEOUT_MS", "0"),
+        ("SHADOW_TIMEOUT_MS", "ten"),
     ],
 )
 def test_a_bad_value_names_the_variable(
@@ -83,10 +91,20 @@ def test_a_bad_value_names_the_variable(
         settings.lateness_margin_ms()
         settings.consumer_metrics_port()
         settings.consumer_start()
+        settings.shadow_timeout_ms()
         StubConfig.from_env()
 
     with pytest.raises(RuntimeError, match=name):
         read_every_setting()
+
+
+@pytest.mark.parametrize(("value", "folder"), [("", None), ("/models/a", Path("/models/a"))])
+def test_shadow_model_dir_empty_is_off(
+    monkeypatch: pytest.MonkeyPatch, value: str, folder: Path | None
+) -> None:
+    """D57.5: unset keeps the committed model; empty turns shadow scoring off."""
+    monkeypatch.setenv("SHADOW_MODEL_DIR", value)
+    assert settings.shadow_model_dir() == folder
 
 
 def test_database_url_is_required(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,0 +1,24 @@
+{
+  "attempt": 2,
+  "consumer_offset_lag_at_end": 6700,
+  "decisions": 8296,
+  "ended_at": "2026-11-09T02:36:01.503543Z",
+  "feature_lag_ms": {
+    "count": 8296,
+    "max": 245702,
+    "p50": 126518,
+    "p99": 240112
+  },
+  "power": {
+    "end": "ac",
+    "start": "ac"
+  },
+  "rate": 800,
+  "scenario": "stub-off",
+  "shadow_scored": 0,
+  "started_at": "2026-11-09T02:32:59.423030Z",
+  "stopped": "p99 passed 50 ms",
+  "stub_backup_answers": 26959,
+  "stub_transfers": 63317,
+  "summary": "stub-off-00800rps-repeat.json"
+}

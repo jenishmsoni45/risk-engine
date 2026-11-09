@@ -1,24 +1,35 @@
-"""`make bench`: the measurement plan (design.md section 12, D40o, D48.2).
+"""`make bench`: the measurement plan (design.md section 12, D40o, D48.2, D57.2, D61).
 
-Three scenarios, each on its own throwaway Compose project, `risk-engine-bench`, started empty and
-removed when it ends, so every run starts from the same state and the normal stack's data is left
-alone (D49). The normal stack must be stopped first: both use the same ports.
+Five scenarios, run in this order in one session, each on its own throwaway Compose project,
+`risk-engine-bench`, started empty and removed when it ends, so every run starts from the same
+state and the normal stack's data is left alone (D49). The normal stack must be stopped first:
+both use the same ports. direct-off and stub-off run with the shadow model off, the rest with it
+on.
 
-- direct: POST /v1/decisions at 50 requests a second, doubling every 3-minute step, until p99
-  passes 50 ms, errors pass 1% or k6 can't hold the rate.
-- stub: the same steps against the stub's POST /transfers, so the decision call, the posting, the
-  relay and the consumer run together.
+- direct-off: POST /v1/decisions at 50 requests a second, doubling every 3-minute step, until p99
+  passes 50 ms, errors pass 1% or k6 can't hold the rate; with shadow scoring off, the baseline
+  for the model's added latency (D57.2).
+- direct: the same steps with shadow scoring on, as the service ships (D57.5).
+- stub-off: the same steps against the stub's POST /transfers, so the decision call, the posting,
+  the relay and the consumer run together; with shadow scoring off (D61).
+- stub: the same, with shadow scoring on.
 - hot: every request to one receiver, from senders drawn at random, whose 24 h window is preloaded
   through Kafka to 1,000, 10,000, 100,000 and 1,000,000 events; 50 requests a second for 3 minutes
   at each size, until p99 passes 50 ms (D48.2, D50). A receiver, because each decision records an
   attempt on its sender: a hot sender's window would grow with the bench's own requests.
 
-Each step writes k6's summary and a file of what the stack saw (decisions, feature lag, consumer
-offset lag, the stub's backup answers, the hot window's size); each scenario writes a conditions
-file. Everything goes to bench/results/<UTC date>/, and bench/report.py makes the README's tables
-from it.
+A step that passes a limit runs once more straight away, at the same rate or window size, and the
+scenario stops only if the repeat passes one too; otherwise it goes on (D61). A real limit fails
+both times, while a stall of the host for a second or two fails only one of them.
 
-    uv run --locked python -m bench.run [direct] [stub] [hot]
+Each step writes k6's summary and a file of what the stack saw (decisions, how many held a shadow
+score, feature lag, consumer offset lag, the stub's backup answers, the hot window's size) and
+whether the host was on AC power at its start and end; each scenario writes a conditions file,
+which names the shadow model or null. Everything goes to bench/results/<UTC date>/, and
+bench/report.py makes the README's tables from it. The bench won't start on battery, since the
+report refuses results from it (D60).
+
+    uv run --locked python -m bench.run [direct-off] [direct] [stub] [hot]
 
 BENCH_STEP_SECONDS shortens every step for a quick try; the conditions file records it, and the
 report refuses results whose steps aren't the plan's 3 minutes.
@@ -35,9 +46,10 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -81,7 +93,12 @@ WINDOW_FEATURES = (
     "dest_in_count_24h",
     "dest_out_count_24h",
 )
-SCENARIOS = ("direct", "stub", "hot")
+# In the order they run when none is named. direct-off and stub-off are direct and stub with shadow
+# scoring off, the baselines for the model's added latency (D57.2, D61); the rest run with it on.
+SCENARIOS = ("direct-off", "direct", "stub-off", "stub", "hot")
+SHADOW_OFF = ("direct-off", "stub-off")
+STUB_SCENARIOS = ("stub-off", "stub")
+MODEL_META = ROOT / "ml" / "model" / "model.json"
 
 
 def env_file() -> Path:
@@ -99,25 +116,59 @@ def read_env() -> dict[str, str]:
     return values
 
 
-def run(args: Sequence[str], *, timeout: float = 600, check: bool = True) -> str:
+def run(
+    args: Sequence[str],
+    *,
+    timeout: float = 600,
+    check: bool = True,
+    env: dict[str, str] | None = None,
+) -> str:
     done = subprocess.run(
-        list(args), cwd=ROOT, capture_output=True, text=True, timeout=timeout, check=False
+        list(args),
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+        env=env,
     )
     if check and done.returncode != 0:
         raise RuntimeError(f"{' '.join(args)} failed:\n{done.stdout}\n{done.stderr}")
     return done.stdout
 
 
-def compose(project: str, *args: str, timeout: float = 600) -> str:
+def compose(
+    project: str, *args: str, timeout: float = 600, env: dict[str, str] | None = None
+) -> str:
     return run(
         ["docker", "compose", "--project-name", project, "--env-file", str(env_file()), *args],
         timeout=timeout,
+        env=env,
     )
 
 
-def stack_up() -> None:
+def shadow_env(shadow: bool) -> dict[str, str]:
+    """The environment Compose interpolates: the API scores the committed model unless
+    SHADOW_MODEL_DIR is empty (D57.5). A value from the caller's shell never leaks in."""
+    env = {key: value for key, value in os.environ.items() if key != "SHADOW_MODEL_DIR"}
+    if not shadow:
+        env["SHADOW_MODEL_DIR"] = ""
+    return env
+
+
+def stack_up(shadow: bool) -> None:
     compose(PROJECT, "down", "--volumes", "--remove-orphans")
-    compose(PROJECT, "up", "--detach", "--build", "--wait", "--wait-timeout", "300", timeout=900)
+    compose(
+        PROJECT,
+        "up",
+        "--detach",
+        "--build",
+        "--wait",
+        "--wait-timeout",
+        "300",
+        timeout=900,
+        env=shadow_env(shadow),
+    )
 
 
 def stack_down() -> None:
@@ -160,17 +211,25 @@ def nearest_rank(values: list[int], q: float) -> int | None:
     return ordered[max(math.ceil(q * len(ordered)), 1) - 1]
 
 
-def decisions_between(start: datetime, end: datetime) -> list[tuple[int | None, dict[str, int]]]:
-    """(feature_lag_ms, features) of every decision requested in [start, end). The lag is None for
-    a decision made before any event was applied, whose lag only marks that (D43)."""
+@dataclass(frozen=True)
+class Row:
+    lag_ms: int | None  # None for a decision made before any event was applied (D43)
+    features: dict[str, int]
+    scored: bool  # the row holds a shadow score
+
+
+def decisions_between(start: datetime, end: datetime) -> list[Row]:
+    """Every decision requested in [start, end)."""
     with database() as conn:
         rows = conn.execute(
             "select feature_lag_ms, features, "
-            "(extract(epoch from requested_at) * 1000)::bigint "
+            "(extract(epoch from requested_at) * 1000)::bigint, shadow_score is not null "
             "from decisions where requested_at >= %s and requested_at < %s",
             (start, end),
         ).fetchall()
-    return [(None if lag == t_ms else lag, features) for lag, features, t_ms in rows]
+    return [
+        Row(None if lag == t_ms else lag, features, scored) for lag, features, t_ms, scored in rows
+    ]
 
 
 def consumer_offset_lag() -> int:
@@ -198,6 +257,23 @@ def quiet(args: Sequence[str]) -> str:
         return ""
 
 
+def power_from(pmset: str) -> str | None:
+    """ "ac" or "battery", from the first line of macOS's `pmset -g batt`; None when it says
+    neither, or when the command isn't there (D60)."""
+    first = pmset.splitlines()[0] if pmset else ""
+    if "'AC Power'" in first:
+        return "ac"
+    if "'Battery Power'" in first:
+        return "battery"
+    return None
+
+
+def power_source() -> str | None:
+    """What the host runs on now. A run on battery is slower in ways the bench can't control, so
+    the report refuses it, and `make bench` won't start on it (D60)."""
+    return power_from(quiet(["pmset", "-g", "batt"]))
+
+
 def tree_clean(root: Path = ROOT) -> bool:
     """Whether the tree matches its commit, leaving out bench/results/, where a run's earlier
     scenarios have already written their files. False when git itself fails."""
@@ -215,7 +291,7 @@ def tree_clean(root: Path = ROOT) -> bool:
     return done.returncode == 0 and done.stdout == ""
 
 
-def conditions(scenario: str, step_s: int) -> dict[str, Any]:
+def conditions(scenario: str, step_s: int, shadow: bool) -> dict[str, Any]:
     rules = ruleset.load(ROOT / "risk" / "rules" / "ruleset.yaml")
     info = json.loads(quiet(["docker", "info", "--format", "{{json .}}"]) or "{}")
     images = json.loads(compose(PROJECT, "images", "--format", "json") or "[]")
@@ -226,6 +302,10 @@ def conditions(scenario: str, step_s: int) -> dict[str, Any]:
         "git_clean": tree_clean(),
         "rule_set_version": rules.version,
         "rule_set_sha256": rules.sha256,
+        # The model the API was given; each step's file counts the decisions it scored.
+        "shadow_model": json.loads(MODEL_META.read_text())["name"] if shadow else None,
+        # Each step's file records it again at its start and end (D60).
+        "power": power_source(),
         "host": {
             "cpu": quiet(["sysctl", "-n", "machdep.cpu.brand_string"]) or platform.processor(),
             "cpus": os.cpu_count(),
@@ -313,43 +393,72 @@ def write(path: Path, document: dict[str, Any]) -> None:
     path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
 
 
+def step_name(base: str, attempt: int) -> str:
+    """A step's file name: the repeat of a step that passed a limit has its own (D61)."""
+    return base if attempt == 1 else f"{base}-repeat"
+
+
+def confirmed(measure: Callable[[int], str | None], label: str) -> str | None:
+    """Runs a step as attempt 1 and, if it passed a limit, once more as attempt 2; the repeat's
+    reason, or None when either held, decides whether the scenario stops (D61)."""
+    stop = measure(1)
+    if stop is None:
+        return None
+    print(f"{label}: {stop}; running it once more", flush=True)
+    return measure(2)
+
+
+def rate_step(out: Path, scenario: str, rate: int, step_s: int, attempt: int) -> str | None:
+    """One step of a rate scenario; writes its files and returns why it passed a limit, if it
+    did."""
+    target, base_url = (
+        ("transfers", STUB_URL) if scenario in STUB_SCENARIOS else ("decisions", API_URL)
+    )
+    name = step_name(f"{scenario}-{rate:05d}rps", attempt)
+    transfers_before = counter_total(STUB_URL, "stub_transfers_total")
+    backups_before = counter_total(STUB_URL, "stub_backup_answers_total")
+    power_at_start = power_source()
+    summary, started, ended = k6_step(out, name, target, base_url, rate, step_s)
+    power = {"start": power_at_start, "end": power_source()}
+    rows = decisions_between(started, ended + timedelta(seconds=1))
+    lags = [row.lag_ms for row in rows if row.lag_ms is not None]
+    transfers = counter_total(STUB_URL, "stub_transfers_total") - transfers_before
+    backups = counter_total(STUB_URL, "stub_backup_answers_total") - backups_before
+    stop = outcome_of(summary, rate, step_s).stop_reason()
+    write(
+        out / f"{name}-stack.json",
+        {
+            "scenario": scenario,
+            "rate": rate,
+            "attempt": attempt,
+            "summary": f"{name}.json",
+            "started_at": format_instant(started),
+            "ended_at": format_instant(ended),
+            "decisions": len(rows),
+            "shadow_scored": sum(row.scored for row in rows),
+            "feature_lag_ms": {
+                "count": len(lags),
+                "p50": nearest_rank(lags, 0.5),
+                "p99": nearest_rank(lags, 0.99),
+                "max": max(lags) if lags else None,
+            },
+            "consumer_offset_lag_at_end": consumer_offset_lag(),
+            "stub_transfers": int(transfers),
+            "stub_backup_answers": int(backups),
+            "power": power,
+            "stopped": stop,
+        },
+    )
+    return stop
+
+
 def rate_steps(out: Path, scenario: str, step_s: int) -> None:
-    target, base_url = ("decisions", API_URL) if scenario == "direct" else ("transfers", STUB_URL)
     rate = FIRST_RATE
     while rate <= MAX_RATE:
-        name = f"{scenario}-{rate:05d}rps"
-        transfers_before = counter_total(STUB_URL, "stub_transfers_total")
-        backups_before = counter_total(STUB_URL, "stub_backup_answers_total")
-        summary, started, ended = k6_step(out, name, target, base_url, rate, step_s)
-        rows = decisions_between(started, ended + timedelta(seconds=1))
-        lags = [lag for lag, _ in rows if lag is not None]
-        transfers = counter_total(STUB_URL, "stub_transfers_total") - transfers_before
-        backups = counter_total(STUB_URL, "stub_backup_answers_total") - backups_before
-        result = outcome_of(summary, rate, step_s)
-        stop = result.stop_reason()
-        write(
-            out / f"{name}-stack.json",
-            {
-                "scenario": scenario,
-                "rate": rate,
-                "summary": f"{name}.json",
-                "started_at": format_instant(started),
-                "ended_at": format_instant(ended),
-                "decisions": len(rows),
-                "feature_lag_ms": {
-                    "count": len(lags),
-                    "p50": nearest_rank(lags, 0.5),
-                    "p99": nearest_rank(lags, 0.99),
-                    "max": max(lags) if lags else None,
-                },
-                "consumer_offset_lag_at_end": consumer_offset_lag(),
-                "stub_transfers": int(transfers),
-                "stub_backup_answers": int(backups),
-                "stopped": stop,
-            },
-        )
+        measure = partial(rate_step, out, scenario, rate, step_s)
+        stop = confirmed(measure, f"{scenario} at {rate}/s")
         if stop is not None:
-            print(f"{scenario}: stopped at {rate}/s: {stop}", flush=True)
+            print(f"{scenario}: stopped at {rate}/s, twice: {stop}", flush=True)
             return
         rate *= 2
 
@@ -423,6 +532,44 @@ def preload(hot: uuid.UUID, start: int, total: int) -> None:
         time.sleep(2)
 
 
+def hot_step(out: Path, hot: uuid.UUID, size: int, step_s: int, attempt: int) -> str | None:
+    """One step of the hot scenario at a window size; writes its files and returns why p99
+    passed 50 ms, if it did. The window stays at its size through a repeat, since the attempts
+    land on the random senders (D50)."""
+    name = step_name(f"hot-{size:07d}", attempt)
+    power_at_start = power_source()
+    summary, started, ended = k6_step(
+        out, name, "hot", API_URL, HOT_RATE, step_s, HOT_RECEIVER=str(hot)
+    )
+    power = {"start": power_at_start, "end": power_source()}
+    rows = decisions_between(started, ended + timedelta(seconds=1))
+    windows = [sum(row.features[f] for f in WINDOW_FEATURES) for row in rows]
+    result = outcome_of(summary, HOT_RATE, step_s)
+    stop = "p99 passed 50 ms" if result.p99_ms > BUDGET_P99_MS else None
+    write(
+        out / f"{name}-stack.json",
+        {
+            "scenario": "hot",
+            "rate": HOT_RATE,
+            "preloaded": size,
+            "attempt": attempt,
+            "summary": f"{name}.json",
+            "started_at": format_instant(started),
+            "ended_at": format_instant(ended),
+            "decisions": len(rows),
+            "shadow_scored": sum(row.scored for row in rows),
+            "members_read": {
+                "p50": nearest_rank(windows, 0.5),
+                "min": min(windows) if windows else None,
+                "max": max(windows) if windows else None,
+            },
+            "power": power,
+            "stopped": stop,
+        },
+    )
+    return stop
+
+
 def hot_steps(out: Path, step_s: int) -> None:
     hot = uuid.uuid4()
     loaded = 0
@@ -430,34 +577,9 @@ def hot_steps(out: Path, step_s: int) -> None:
         print(f"hot: preloading to {size} events", flush=True)
         preload(hot, loaded, size)
         loaded = size
-        name = f"hot-{size:07d}"
-        summary, started, ended = k6_step(
-            out, name, "hot", API_URL, HOT_RATE, step_s, HOT_RECEIVER=str(hot)
-        )
-        rows = decisions_between(started, ended + timedelta(seconds=1))
-        windows = [sum(features[f] for f in WINDOW_FEATURES) for _, features in rows]
-        result = outcome_of(summary, HOT_RATE, step_s)
-        stop = "p99 passed 50 ms" if result.p99_ms > BUDGET_P99_MS else None
-        write(
-            out / f"{name}-stack.json",
-            {
-                "scenario": "hot",
-                "rate": HOT_RATE,
-                "preloaded": size,
-                "summary": f"{name}.json",
-                "started_at": format_instant(started),
-                "ended_at": format_instant(ended),
-                "decisions": len(rows),
-                "members_read": {
-                    "p50": nearest_rank(windows, 0.5),
-                    "min": min(windows) if windows else None,
-                    "max": max(windows) if windows else None,
-                },
-                "stopped": stop,
-            },
-        )
+        stop = confirmed(partial(hot_step, out, hot, size, step_s), f"hot at {size} events")
         if stop is not None:
-            print(f"hot: stopped at {size} events: {stop}", flush=True)
+            print(f"hot: stopped at {size} events, twice: {stop}", flush=True)
             return
 
 
@@ -477,6 +599,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if unknown:
         parser.error(f"unknown scenarios {unknown}; choose from {list(SCENARIOS)}")
     step_s = int(os.environ.get("BENCH_STEP_SECONDS") or STEP_S)
+    if power_source() == "battery":
+        print("The host is on battery, and the report refuses results from it: plug in first.")
+        return 2
     if normal_stack_running():
         print("The normal stack is running and uses the same ports: run `make down` first.")
         return 2
@@ -484,9 +609,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     for scenario in scenarios:
         print(f"{scenario}: starting a fresh stack", flush=True)
+        shadow = scenario not in SHADOW_OFF
         try:
-            stack_up()
-            write(out / f"conditions-{scenario}.json", conditions(scenario, step_s))
+            stack_up(shadow)
+            write(out / f"conditions-{scenario}.json", conditions(scenario, step_s, shadow))
             if scenario == "hot":
                 hot_steps(out, step_s)
             else:

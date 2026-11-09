@@ -121,6 +121,12 @@ services:
     <<: *app
     # Serves on 8000 with the keep-alive of KEEP_ALIVE_SECONDS (D40e).
     command: ["python", "-m", "risk.api"]
+    environment:
+      <<: *app-env
+      # The committed model, which the image carries, scored in shadow (D57.5, D58a). An empty
+      # SHADOW_MODEL_DIR in the caller's environment turns shadow scoring off, as the bench's
+      # shadow-off run does; unset, it stays on.
+      SHADOW_MODEL_DIR: ${SHADOW_MODEL_DIR-ml/model}
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -185,6 +191,18 @@ services:
     profiles: ["model"]
     network_mode: none
     entrypoint: ["python", "-m", "ml.train"]
+    restart: "no"
+
+  # make backtest (D58k): scores the committed model in this image, the only place LightGBM runs
+  # (D51.4), as the model service does. Its profile keeps `make up` from starting it; the command
+  # that runs it mounts what it reads and writes.
+  backtest:
+    image: risk-engine:local
+    build:
+      context: .
+    profiles: ["backtest"]
+    network_mode: none
+    entrypoint: ["python", "-m", "ml.backtest"]
     restart: "no"
 
 volumes:

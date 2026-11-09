@@ -11,6 +11,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -231,31 +232,59 @@ def decision_row(**overrides: Any) -> dict[str, Any]:
 RULE_FIXTURES = ROOT / "tests" / "fixtures" / "rules"
 
 
-def api_run_args(name: str, rules_file: Path) -> list[str]:
+def api_run_args(
+    name: str,
+    rules_file: Path | None = None,
+    env: Mapping[str, str] | None = None,
+    volumes: Sequence[str] = (),
+) -> list[str]:
     """`docker compose run` arguments for a second decision API container, from the same image,
-    on the stack's Redis and Postgres and started from rules_file, so the API every other test
-    uses keeps running. The file's folder is mounted read-only; the container runs as an
-    unprivileged user, so the folder and the file must be world-readable."""
-    return [
-        "run",
-        "--rm",
-        "--no-deps",
-        "--name",
-        name,
-        "--volume",
-        f"{rules_file.parent}:/rules:ro",
-        "--env",
-        f"RULES_PATH=/rules/{rules_file.name}",
-    ]
+    on the stack's Redis and Postgres, so the API every other test uses keeps running. It starts
+    from rules_file when one is given, whose folder is mounted read-only, with the extra
+    environment and volumes given. The container runs as an unprivileged user, so a mounted
+    folder and its files must be world-readable."""
+    args = ["run", "--rm", "--no-deps", "--name", name]
+    if rules_file is not None:
+        args += [
+            "--volume",
+            f"{rules_file.parent}:/rules:ro",
+            "--env",
+            f"RULES_PATH=/rules/{rules_file.name}",
+        ]
+    for volume in volumes:
+        args += ["--volume", volume]
+    for key, value in (env or {}).items():
+        args += ["--env", f"{key}={value}"]
+    return args
+
+
+@dataclass(frozen=True)
+class SecondApi:
+    url: str
+    container: str
+
+    def logs(self) -> str:
+        done = subprocess.run(
+            ["docker", "logs", self.container], capture_output=True, text=True, check=True
+        )
+        return done.stdout + done.stderr
 
 
 @contextmanager
-def api_with_rules(rules_file: Path) -> Iterator[str]:
-    """The base URL of a second decision API started from rules_file, until the block ends."""
-    name = unique("risk-engine-api-restarted")
+def second_api(
+    rules_file: Path | None = None,
+    env: Mapping[str, str] | None = None,
+    volumes: Sequence[str] = (),
+) -> Iterator[SecondApi]:
+    """A second decision API (api_run_args), healthy, on a free port, until the block ends."""
+    name = unique("risk-engine-api-second")
     port = free_port()
     compose(
-        *api_run_args(name, rules_file), "--detach", "--publish", f"127.0.0.1:{port}:8000", "api"
+        *api_run_args(name, rules_file, env, volumes),
+        "--detach",
+        "--publish",
+        f"127.0.0.1:{port}:8000",
+        "api",
     )
     url = f"http://127.0.0.1:{port}"
     try:
@@ -266,14 +295,21 @@ def api_with_rules(rules_file: Path) -> Iterator[str]:
                     break
             except httpx.TransportError:
                 pass
-            assert time.monotonic() < deadline, "the restarted API never became healthy"
+            assert time.monotonic() < deadline, "the second API never became healthy"
             time.sleep(0.2)
-        yield url
+        yield SecondApi(url, name)
     finally:
         # --rm removes the container once it has stopped, a moment after `docker stop` returns;
         # waiting for that keeps it out of the next test's `docker compose ps`.
         subprocess.run(["docker", "stop", "--time", "5", name], capture_output=True, check=False)
         wait_until_removed(name)
+
+
+@contextmanager
+def api_with_rules(rules_file: Path) -> Iterator[str]:
+    """The base URL of a second decision API started from rules_file, until the block ends."""
+    with second_api(rules_file) as api:
+        yield api.url
 
 
 def wait_until_removed(container: str, timeout: float = 30) -> None:

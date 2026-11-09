@@ -7,4 +7,6 @@
 !risk/
 !ledger_stub/
 !ml/*.py
+# The committed model the decision API scores in shadow (D58a).
+!ml/model/
 **/__pycache__

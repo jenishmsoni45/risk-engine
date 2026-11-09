@@ -1,6 +1,6 @@
 # Talk outline: deciding before the money moves
 
-A 20-minute talk on 2a: a risk decision made inside a ledger's transfer path, within a latency budget, from features built off the ledger's own event stream. Every number shown comes from README.md's tables, which `make report` writes from `bench/results/`. None is quoted here, so the outline can't drift from them.
+A 20-minute talk on 2a, then a 10-minute 2b part on the model in shadow (sections 10 to 13): a risk decision made inside a ledger's transfer path, within a latency budget, from features built off the ledger's own event stream. Every number shown comes from README.md's tables, which `make report` writes from `bench/results/`. None is quoted here, so the outline can't drift from them.
 
 ## 1. The problem (2 min)
 
@@ -44,6 +44,7 @@ A 20-minute talk on 2a: a risk decision made inside a ledger's transfer path, wi
 - Show README.md's tables: p50 and p99 per rate, straight to the API and through the stub; the first rate whose p99 passes 50 ms; the timeout rate; the consumer lag.
 - The hot account: p99 against the size of one account's 24 h window, and why the read cost grows with it (D16).
 - A bench that measured itself: the first hot-account run used a hot sender, and every request added an attempt to the window it was measuring. Making the hot account a receiver kept the window at its preloaded size (D50).
+- A bench the host can't spoil: one session slept inside a step, and another stalled once at a rate it had held before. The report refuses a step that ran off its length or on battery, and a step that passes a limit runs once more, so a run stops only where both attempts failed (D60, D61).
 - How the numbers are kept honest: constant arrival rate, client-side latency, a fresh stack per scenario, the conditions file beside every result, and `make check-readme` failing CI when README's tables differ from the results.
 
 ## 8. What broke (2 min)
@@ -54,6 +55,34 @@ A 20-minute talk on 2a: a risk decision made inside a ledger's transfer path, wi
 ## 9. Beyond one machine (1 min)
 
 - design.md section 13: a stateless API behind a load balancer, the consumer scaled by partitions, Redis sharded by account with a hash tag, and the hot account still the limit on its shard.
+
+## 2b: a model in shadow (a second talk, or the last 10 minutes of a longer one)
+
+Every number again comes from README.md's 2b block, which `make report` writes from `ml/reports/backtest.json` and `bench/results/`; none is quoted here.
+
+### 10. Labelled data the guard could have seen (2 min)
+
+- PaySim replayed as ledger transfers through the stub in replay mode: every transfer is posted whatever the decision, so the history the model learns from isn't rewritten (D40u).
+- One feature module for the service and the offline pipeline. I6: an event at or after `t` changes nothing. I7: every logged snapshot equals the offline recompute, exactly, on generated data in CI and on about 10k real transfers with `make parity` (D36, D37).
+- What the profile showed: senders almost never repeat, so the receiver's side carries the signal, and the hour of day would have given PaySim's fraud away, so the model doesn't read it (D54).
+
+### 11. Training honestly (2 min)
+
+- A split by days: train, then two days to set the threshold, then seven test days nobody looks at until the end (D38).
+- A threshold set by review capacity, at most 1% held, never more (D34, D55.3), and the model card that one command rebuilds.
+
+### 12. Shadow without risk (3 min)
+
+- The score is computed after the rules have fixed the decision, stored in the same row, and never read (D39). The cost of promoting the model is measured on the real path, not guessed.
+- A slow model can't turn a decision into a 503: one worker thread, a 10 ms limit, and a request whose wait has ended is dropped before it runs (D57.1).
+- I8: the same requests with shadow off, on, and on with a model that raises, returns nonsense or is slow give identical decisions; the real model against a shadow-off API, with every starter rule firing, too.
+- Show the 2b block's latency tables, straight to the API and through the stub: p50 and p99 with the model off and on at each rate, and the share of decisions it scored (D61).
+
+### 13. Better, or just stricter? (3 min)
+
+- The backtest holds the rules and the model to the same number of test-day transfers and compares recall, fraud value caught and false positives (D40q).
+- The tie: many transfers can share one score, so no line holds exactly the rules' count. The backtest shows the model on both sides of the tie rather than breaking it by an arbitrary order (D59).
+- Read the result off the 2b block, and say what it means for PaySim, a simulation, before saying anything about real fraud.
 
 ## Questions to be ready for (PLAN.md section 9)
 

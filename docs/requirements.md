@@ -103,7 +103,7 @@ Each criterion is checked by a test or a script named in [phases.md](phases.md).
 3. With shadow on, p99 stays within 50 ms at every bench rate below the one where 2a's p99 crossed 50 ms, and the model's added latency is published.
 
 **US15. Backtest rules against the model.** As a risk analyst, I want rules and model compared on the same test days at the same hold rate, so that "better" means better.
-1. The backtest CLI reports, on the test days, the PaySim rule set (D54) at its own hold rate against the model at that same rate, plus the model at 1%, with recall, fraud value caught and false-positive rate for each (D40q).
+1. The backtest CLI reports, on the test days, the PaySim rule set (D54) at its own hold rate against the model at that same rate, plus the model at 1%, with recall, fraud value caught and false-positive rate for each (D40q). Where transfers sharing the model's score at a line straddle that rate, the model is reported on both sides of the tie (D59).
 
 ## 4. Non-functional requirements
 
