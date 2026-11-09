@@ -1,0 +1,21 @@
+{
+  "attempt": 1,
+  "decisions": 1148,
+  "ended_at": "2026-11-09T03:00:38.014622Z",
+  "members_read": {
+    "max": 10006,
+    "min": 10001,
+    "p50": 10002
+  },
+  "power": {
+    "end": "ac",
+    "start": "ac"
+  },
+  "preloaded": 10000,
+  "rate": 50,
+  "scenario": "hot",
+  "shadow_scored": 1052,
+  "started_at": "2026-11-09T02:57:37.848487Z",
+  "stopped": "p99 passed 50 ms",
+  "summary": "hot-0010000.json"
+}

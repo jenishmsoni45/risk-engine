@@ -91,18 +91,19 @@ The rules are in [`risk/rules/ruleset.yaml`](risk/rules/ruleset.yaml) and are re
 `make bench` drives the stack with k6 at a constant arrival rate. Each step lasts 3 minutes, starting at 50 requests a second and doubling until p99 passes the 50 ms budget, errors pass 1%, or k6 can't hold the rate (design.md section 12, D40o, D49). A step that passes a limit runs once more straight away, and a run stops only where both attempts did, so a brief stall of the machine can't end it. The tables below show both attempts (D61). Latency is measured at the client. Each scenario starts from an empty stack and runs with the shadow model on, as the service ships; [2b](#2b-a-model-in-shadow) compares the direct and stub runs with it off. `make report` writes the tables below from the result files committed in `bench/results/`, and CI fails if they differ. Every number here comes from that script; none was typed by hand.
 
 <!-- bench:start -->
-<!-- Made by `make report` from `bench/results/2026-11-03/`; `make check-readme` fails if it differs. Don't edit by hand. -->
+<!-- Made by `make report` from `bench/results/2026-11-09/`; `make check-readme` fails if it differs. Don't edit by hand. -->
 
 #### Straight to the decision API
 
 | Rate (req/s) | Requests | p50 (ms) | p99 (ms) | Errors | Dropped |
 |---:|---:|---:|---:|---:|---:|
-| 50 | 9001 | 4.3 | 7.5 | 0.00% | 0 |
-| 100 | 17992 | 1.9 | 9.0 | 0.38% | 8 |
-| 200 | 36001 | 1.3 | 3.1 | 0.00% | 0 |
-| 400 | 72001 | 1.2 | 2.5 | 0.00% | 0 |
-| 800 | 143976 | 0.9 | 5.5 | 0.18% | 25 |
-| 1600 | 287972 | 2.6 | 84.8 | 18.70% | 28 |
+| 50 | 9001 | 4.2 | 7.3 | 0.00% | 0 |
+| 100 | 18000 | 2.1 | 5.4 | 0.00% | 0 |
+| 200 | 36001 | 1.4 | 3.5 | 0.00% | 0 |
+| 400 | 71990 | 1.3 | 4.0 | 0.15% | 11 |
+| 800 | 144000 | 1.1 | 6.3 | 0.00% | 0 |
+| 1600 | 287889 | 69.3 | 111.1 | 96.84% | 112 |
+| 1600, again | 287896 | 69.9 | 117.9 | 96.89% | 104 |
 
 p99 first passes 50 ms at **1600 requests a second**.
 
@@ -110,11 +111,12 @@ p99 first passes 50 ms at **1600 requests a second**.
 
 | Rate (req/s) | Requests | p50 (ms) | p99 (ms) | Errors | Timeout rate | Feature lag p50 (ms) | Feature lag p99 (ms) | Offset lag at end |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 50 | 9000 | 5.0 | 8.1 | 0.00% | 0.00% | 376 | 677 | 15 |
-| 100 | 18000 | 2.9 | 5.6 | 0.00% | 0.00% | 376 | 678 | 22 |
-| 200 | 36000 | 2.2 | 6.3 | 0.00% | 0.00% | 364 | 669 | 0 |
-| 400 | 72001 | 2.2 | 7.3 | 0.00% | 0.00% | 369 | 676 | 0 |
-| 800 | 69807 | 2043.0 | 4230.2 | 39.67% | 25.82% | 31833 | 144758 | 12700 |
+| 50 | 9000 | 5.3 | 9.5 | 0.00% | 0.00% | 117 | 218 | 0 |
+| 100 | 18001 | 3.1 | 7.3 | 0.00% | 0.00% | 108 | 209 | 0 |
+| 200 | 36001 | 2.4 | 7.0 | 0.00% | 0.00% | 104 | 204 | 0 |
+| 400 | 71969 | 2.5 | 12.0 | 0.12% | 0.12% | 106 | 204 | 0 |
+| 800 | 67777 | 1943.8 | 4129.8 | 20.39% | 17.72% | 43852 | 142399 | 14500 |
+| 800, again | 63535 | 2161.1 | 4344.4 | 95.45% | 43.86% | 108825 | 223983 | 4804 |
 
 p99 first passes 50 ms at **800 transfers a second**.
 
@@ -122,16 +124,19 @@ p99 first passes 50 ms at **800 transfers a second**.
 
 | Preloaded events | Members read, median | p50 (ms) | p99 (ms) | Errors |
 |---:|---:|---:|---:|---:|
-| 1000 | 1000 | 7.0 | 8.2 | 0.00% |
-| 10000 | 10002 | 99.6 | 163.7 | 91.09% |
+| 1000 | 1000 | 7.2 | 9.3 | 0.00% |
+| 10000 | 10002 | 99.7 | 159.9 | 92.65% |
+| 10000, again | 10002 | 99.5 | 164.1 | 93.05% |
 
 p99 first passes 50 ms with **10000 preloaded events** in the receiver's 24 h window.
 
 Measured on:
 
-- `direct`: Apple M4, 10 cores, 16 GiB, Darwin 27.0.0 27.0; Docker 29.9.2, its VM 5 CPUs and 7.7 GiB; commit `cb14381`, rule set v1; k6 v2.3.0; steps of 180 s.
-- `hot`: Apple M4, 10 cores, 16 GiB, Darwin 27.0.0 27.0; Docker 29.9.2, its VM 5 CPUs and 7.7 GiB; commit `28025bf`, rule set v1; k6 v2.3.0; steps of 180 s.
-- `stub`: Apple M4, 10 cores, 16 GiB, Darwin 27.0.0 27.0; Docker 29.9.2, its VM 5 CPUs and 7.7 GiB; commit `cb14381`, rule set v1; k6 v2.3.0; steps of 180 s.
+- `direct`: Apple M4, 10 cores, 16 GiB, Darwin 27.0.0 27.0, on AC power; Docker 29.9.2, its VM 5 CPUs and 7.7 GiB; commit `12eb438`, rule set v1, shadow model `lgbm-22f566b6643e`; k6 v2.3.0; steps of 180 s.
+- `direct-off`: Apple M4, 10 cores, 16 GiB, Darwin 27.0.0 27.0, on AC power; Docker 29.9.2, its VM 5 CPUs and 7.7 GiB; commit `12eb438`, rule set v1, shadow off; k6 v2.3.0; steps of 180 s.
+- `hot`: Apple M4, 10 cores, 16 GiB, Darwin 27.0.0 27.0, on AC power; Docker 29.9.2, its VM 5 CPUs and 7.7 GiB; commit `12eb438`, rule set v1, shadow model `lgbm-22f566b6643e`; k6 v2.3.0; steps of 180 s.
+- `stub`: Apple M4, 10 cores, 16 GiB, Darwin 27.0.0 27.0, on AC power; Docker 29.9.2, its VM 5 CPUs and 7.7 GiB; commit `12eb438`, rule set v1, shadow model `lgbm-22f566b6643e`; k6 v2.3.0; steps of 180 s.
+- `stub-off`: Apple M4, 10 cores, 16 GiB, Darwin 27.0.0 27.0, on AC power; Docker 29.9.2, its VM 5 CPUs and 7.7 GiB; commit `12eb438`, rule set v1, shadow off; k6 v2.3.0; steps of 180 s.
 
 <!-- bench:end -->
 
@@ -140,6 +145,7 @@ How to read them:
 - **One busy account breaks the budget before total traffic does.** The direct and stub tables spread the load over many accounts and raise the rate. The hot table holds the rate at the direct table's first step and grows one account's window instead. Every decision reads that account's whole 24 h window to compute its sums, so the cost grows with the window, not with the rate (D16). Multi-level buckets are the documented way up (D16). They aren't built; they're a follow-up.
 - **Past its last clean step, the path through the stub falls back rather than hangs.** The posting, the relay and the consumer share the machine with the decision API. Once they can't keep up, the stub's backup answer shows up in the timeout rate, and the feature lag grows, as design.md's failure table says it should.
 - **Every scenario ran in one session, on one commit** (D57.2), so the tables compare like with like. An earlier hot-account run had used a hot sender, and the bench's own attempts grew the window it was measuring, so the scenario was redesigned around a receiver (D50).
+- **A stall of the machine can't decide a result.** Earlier sessions were set aside: in one the Mac slept inside a step, and in another a brief stall ended a run at a rate the service holds. The report now refuses a step that ran off its length or on battery, and a step that passes a limit runs once more. Every crossing above failed on both attempts (D60, D61).
 
 ## 2b: a model in shadow
 
@@ -154,7 +160,50 @@ The rules above were written by hand. 2b asks whether a model trained on labelle
 `make report` writes the tables below from `ml/reports/backtest.json` and the bench results, and CI fails if they differ.
 
 <!-- 2b:start -->
+<!-- Made by `make report` from `ml/reports/backtest.json` and `bench/results/2026-11-09/`; `make check-readme` fails if it differs. Don't edit by hand. -->
+
+#### The rules against the model, on PaySim's test days
+
+Days 24 to 30 of `PS_20174392719_1491204439457_log.csv`: 67944 transfers, of which fraud 1831, seen by neither side (D38).
+
+|  | held | recall | fraud value caught | false-positive rate |
+|---|---|---|---|---|
+| PaySim rules (v2), at their own hold rate | 1.16% (786) | 16.71% (306 of 1831) | 71.36% | 0.73% (480) |
+| model `lgbm-22f566b6643e`, at the rules' hold rate and at 1%: above a tie of 199 | 0.97% (659) | 14.69% (269 of 1831) | 67.50% | 0.59% (390) |
+| model `lgbm-22f566b6643e`, at the rules' hold rate and at 1%: with the tie of 199 | 1.26% (858) | 17.80% (326 of 1831) | 72.73% | 0.80% (532) |
+
+#### What the shadow model costs, straight to the decision API
+
+| Rate (req/s) | p50 off (ms) | p50 on (ms) | Added p50 (ms) | p99 off (ms) | p99 on (ms) | Added p99 (ms) | Scored |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 50 | 4.5 | 4.2 | -0.3 | 6.8 | 7.3 | +0.5 | 99.99% |
+| 100 | 1.9 | 2.1 | +0.2 | 4.8 | 5.4 | +0.6 | 99.99% |
+| 200 | 1.3 | 1.4 | +0.1 | 2.8 | 3.5 | +0.7 | 100.00% |
+| 400 | 1.2 | 1.3 | +0.1 | 14.4 | 4.0 | -10.4 | 99.99% |
+| 800 | 0.9 | 1.1 | +0.2 | 3.0 | 6.3 | +3.3 | 99.99% |
+| 1600 | 69.5 | 69.9 | +0.4 | 99.5 | 117.9 | +18.4 | 99.86% |
+
+With the model off, p99 first passes 50 ms at **1600 requests a second**. With it on, p99 stays within 50 ms at every rate below that: 50 to 800 requests a second.
+
+#### What the shadow model costs, through the ledger stub
+
+| Rate (req/s) | p50 off (ms) | p50 on (ms) | Added p50 (ms) | p99 off (ms) | p99 on (ms) | Added p99 (ms) | Scored |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 50 | 5.0 | 5.3 | +0.3 | 9.1 | 9.5 | +0.4 | 100.00% |
+| 100 | 3.1 | 3.1 | +0.0 | 7.0 | 7.3 | +0.3 | 100.00% |
+| 200 | 2.3 | 2.4 | +0.1 | 6.3 | 7.0 | +0.7 | 100.00% |
+| 400 | 2.3 | 2.5 | +0.2 | 8.6 | 12.0 | +3.4 | 100.00% |
+| 800 | 2159.8 | 2161.1 | +1.3 | 4337.6 | 4344.4 | +6.8 | 99.93% |
+
+With the model off, p99 first passes 50 ms at **800 transfers a second**. With it on, p99 stays within 50 ms at every rate below that: 50 to 400 transfers a second.
+
 <!-- 2b:end -->
+
+How to read them:
+
+- **The model doesn't beat the rules on PaySim's test days.** The rules' hold count falls inside a tie of the model's scores, and the rules' recall, fraud value caught and false-positive rate each lie between the model's on the two sides of that tie. PaySim is a simulation, so this says nothing yet about real fraud.
+- **Shadow scoring costs no capacity.** With the model off and on, the direct path and the path through the stub first pass 50 ms at the same rate, and with it on, every rate below that held within the budget (Phase 8, criterion 4).
+- **Its added latency is smaller than the spread between runs.** At some rates p99 is lower with the model on than off. One 3-minute step per rate shows that the cost is small, not exactly how small.
 
 ## How it was built and verified
 
