@@ -44,6 +44,7 @@ A 20-minute talk on 2a, then a 10-minute 2b part on the model in shadow (section
 - Show README.md's tables: p50 and p99 per rate, straight to the API and through the stub; the first rate whose p99 passes 50 ms; the timeout rate; the consumer lag.
 - The hot account: p99 against the size of one account's 24 h window, and why the read cost grows with it (D16).
 - A bench that measured itself: the first hot-account run used a hot sender, and every request added an attempt to the window it was measuring. Making the hot account a receiver kept the window at its preloaded size (D50).
+- A bench the host can't spoil: one session slept inside a step, and another stalled once at a rate it had held before. The report refuses a step that ran off its length or on battery, and a step that passes a limit runs once more, so a run stops only where both attempts failed (D60, D61).
 - How the numbers are kept honest: constant arrival rate, client-side latency, a fresh stack per scenario, the conditions file beside every result, and `make check-readme` failing CI when README's tables differ from the results.
 
 ## 8. What broke (2 min)
@@ -75,7 +76,7 @@ Every number again comes from README.md's 2b block, which `make report` writes f
 - The score is computed after the rules have fixed the decision, stored in the same row, and never read (D39). The cost of promoting the model is measured on the real path, not guessed.
 - A slow model can't turn a decision into a 503: one worker thread, a 10 ms limit, and a request whose wait has ended is dropped before it runs (D57.1).
 - I8: the same requests with shadow off, on, and on with a model that raises, returns nonsense or is slow give identical decisions; the real model against a shadow-off API, with every starter rule firing, too.
-- Show the 2b block's latency table: p50 and p99 with the model off and on at each rate, and the share of decisions it scored.
+- Show the 2b block's latency tables, straight to the API and through the stub: p50 and p99 with the model off and on at each rate, and the share of decisions it scored (D61).
 
 ### 13. Better, or just stricter? (3 min)
 

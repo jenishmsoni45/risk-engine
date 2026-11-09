@@ -630,6 +630,7 @@ Choices made within D39, D40q, D51.4, D55, D56 and D57, shown to the owner with 
 - Why: a real limit fails twice in a row, while a stall of the host fails once. The stub runs with shadow off and on, on one commit, differ only in the model, so README can show whether the stub path's drop comes from the model.
 - Consequences: each scenario runs one more step at its stop, and the session one more scenario. The repeat starts straight after the first attempt, as each doubling does, with no time to settle: in the run above, the consumer's offset lag was 0 at the end of every step, the stub's 400/s step included.
 - Doc changes (owner approved): design.md section 12's decision latency, hot account and shadow cost bullets, and its recording bullet with D60's change.
+- Outcome: the session in `bench/results/2026-11-09/`, on commit `12eb438`, on AC power, every step within 5% of its length. Direct crossed at 1,600/s with shadow off and on, the stub path at 800/s with both, and the hot account at 10,000 events; every crossing failed on its repeat, and no step held on one. The stub path held 400/s with shadow off (p99 8.6 ms) and on (12.0 ms), so the earlier failures there didn't come back, and it crosses where 2a's did, with D51.1's consumer loop and with the model. Below its crossing, the stub path's feature lag p50 is from 104 to 117 ms, against 2a's 364 to 376 ms: D51.1's change cost no capacity.
 
 Choices made while building D61. Row b was found in self-review and goes to the owner with this change. No doc changes.
 
