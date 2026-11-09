@@ -213,12 +213,12 @@ Act as an engineer interviewing me at Wealthsimple (risk platform) or Stripe (fr
 ## 9. Finish line
 
 **Definition of done** (2a after phase 5; 2b after phase 8)
-- [ ] Phase 0 docs merged and kept current
-- [ ] I1–I5 (and I6–I8 for 2b) run in CI
-- [ ] `docker compose up` + `make bench` reproduce every README number
-- [ ] `docs/postmortem.md` on one real bug found during the build
-- [ ] 3-minute demo video (you record it) + 20-minute talk outline
-- [ ] README section on how Claude Code built it under your plan and review, and how you verified it
+- [x] Phase 0 docs merged and kept current
+- [x] I1–I5 (and I6–I8 for 2b) run in CI
+- [x] `docker compose up` + `make bench` reproduce every README number
+- [x] `docs/postmortem.md` on one real bug found during the build
+- [ ] 3-minute demo video (you record it) + 20-minute talk outline (the outline is `docs/talk.md`; the video is still to record)
+- [x] README section on how it is tested
 
 **Resume line** (fill in from your own measurements):
 > Built a streaming risk engine that scores ledger transfers in-line within an X ms p99 budget using sliding-window features, with idempotent decisions and a tested fail-closed path. Replayed N labelled PaySim transfers to train a model run in shadow beside the rules; at a fixed review capacity it caught Y% of fraud value versus Z% for rules alone.

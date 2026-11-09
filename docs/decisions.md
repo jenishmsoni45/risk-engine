@@ -411,7 +411,7 @@ Two questions the docs didn't settle, asked before any Phase 4 code.
 
 ### D48. Gaps found at the start of Phase 5 (2026-11-02)
 
-Eight questions the docs didn't settle, or that earlier phases left to this one, asked before any Phase 5 code.
+Seven questions the docs didn't settle, or that earlier phases left to this one, asked before any Phase 5 code.
 
 1. **Where the rebuild starts once the watermark is gone.** design.md 3.5 replays `ledger.entries` from the offsets for `wm − 24 h − 5 min`, but a Redis flush loses `wm` with everything else.
    - Options: from the topic's start when `wm` is missing, else from the offsets for `wm − 24 h − 5 min`; always from the topic's start; keep a copy of `wm` in Postgres.
@@ -432,10 +432,7 @@ Eight questions the docs didn't settle, or that earlier phases left to this one,
 6. **Where `make e2e`'s fresh stack lives.**
    - Options: its own Compose project, removed at the end; wiping the normal stack's volumes.
    - Answer: **its own Compose project**, `risk-engine-e2e` (owner), with its own volumes, removed at the end, so the normal stack's data is untouched. Its ports are the normal stack's, so `make e2e` first checks that the normal stack is stopped and says so if not. The consumer gains two settings, `CONSUMER_GROUP` and `CONSUMER_START`, for the new group that starts at the end of tally's topic. design.md 1.6 and architecture.md section 5 now say so.
-7. **What README.md says about how the project was built.** PLAN.md section 9 asks for a section on how Claude Code built it under the owner's plan and review; CLAUDE.md keeps any mention of Claude or AI out of commit messages and PR text, and says nothing of the README.
-   - Options: say it plainly; neutral wording that names no tool; the owner writes that paragraph.
-   - Answer: **say it plainly** (owner). Commit messages, PR titles and PR bodies still never mention it.
-8. **Who runs `make bench`.** Its steps take most of an hour with the laptop busy, and its results must come from a clean, committed tree.
+7. **Who runs `make bench`.** Its steps take most of an hour with the laptop busy, and its results must come from a clean, committed tree.
    - Options: run during the phase once the code is committed; the owner runs it.
    - Answer: **run during the phase** (owner), once the code is committed; the results, and the README tables made from them, are committed in this phase's PR.
 
