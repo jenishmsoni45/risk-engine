@@ -2,19 +2,17 @@
 
 A streaming risk decision engine for [tally](https://github.com/jenishmsoni45/tally), a double-entry ledger. Before tally posts a transfer it asks this service: **allow**, **hold** or **block**? The answer comes from versioned YAML rules over rolling per-account counts and sums for the last minute, hour and day, built from tally's own event stream. If no answer arrives within the caller's 100 ms timeout, the caller applies a backup answer chosen by the rule set, so an outage here never stalls payments.
 
-It is built to be correct under the conditions real streams create:
+The service has to stay correct under what real event streams do. Each of these guarantees is an invariant with its own tests, run in CI on every pull request:
 
-- **One key, one answer.** A retried transfer, even one sent concurrently, gets the decision it got the first time (I1).
-- **A messy stream doesn't move the numbers.** Duplicate and reordered events never change a feature (I2), and every window equals a recompute from the raw event log (I3).
-- **Never hang.** Past its timeout, the caller applies the backup answer (I4).
-- **Every decision explains itself.** Each row in the decision log stores the rule-set version, the rules that fired and a snapshot of all 31 features (I5).
+- A retried transfer, even one sent concurrently, gets the decision it got the first time (I1).
+- Duplicate or reordered events never change a feature (I2), and every window equals a recompute from the raw event log (I3).
+- Past its timeout, the caller applies the backup answer instead of waiting (I4).
+- Each row in the decision log stores the rule-set version, the rules that fired and a snapshot of all 31 features (I5).
 
-2b adds a LightGBM model trained on [PaySim](https://www.kaggle.com/datasets/ealaxi/paysim1), a public labelled fraud dataset, and scores it in shadow next to the rules ([below](#2b-a-model-in-shadow)):
+The second part of the project (2b in the docs) trains a LightGBM model on [PaySim](https://www.kaggle.com/datasets/ealaxi/paysim1), a public labelled fraud dataset, and scores it in shadow next to the rules ([below](#a-model-in-shadow)):
 
-- **Features from one module.** Training sees exactly the features the live service computed: only events before the decision time count (I6), and offline features equal the ones logged online (I7).
-- **Shadow can't change a decision.** The model scores after the rules have decided, and its score is stored, never read; a model that fails, talks nonsense or is slow changes nothing (I8).
-
-Each guarantee is an invariant with its own tests, which run in CI on every pull request.
+- Training uses exactly the features the live service computes. Only events before the decision time count (I6), and the offline features equal the ones logged online (I7).
+- The model scores after the rules have decided, and its score is stored but never read, so a model that fails, returns garbage or is slow changes nothing (I8).
 
 ## Architecture
 
@@ -81,14 +79,16 @@ The other targets (`make help` lists them all):
 | `make report` | rewrite this README's tables from the newest bench results and the backtest |
 | `make check-readme` | fail if this README's tables differ from `make report`'s output (CI runs it) |
 | `make e2e` | real tally (`TALLY_DIR`, default `~/Desktop/tally`) against a throwaway stack; needs the normal stack stopped |
-| `make profile`, `make paysim-rules`, `make parity`, `make model`, `make backtest` | 2b, on the PaySim CSV you download into `data/` yourself ([below](#2b-a-model-in-shadow)) |
+| `make profile`, `make paysim-rules`, `make parity`, `make model`, `make backtest` | the model's pipeline, on the PaySim CSV you download into `data/` yourself ([below](#a-model-in-shadow)) |
 | `make clean` / `make purge` | remove this project's containers, volumes, image and caches |
 
 The rules are in [`risk/rules/ruleset.yaml`](risk/rules/ruleset.yaml) and are read once at startup. An invalid file stops the service, and the caller then applies its backup answer.
 
 ## The numbers
 
-`make bench` drives the stack with k6 at a constant arrival rate. Each step lasts 3 minutes, starting at 50 requests a second and doubling until p99 passes the 50 ms budget, errors pass 1%, or k6 can't hold the rate (design.md section 12, D40o, D49). A step that passes a limit runs once more straight away, and a run stops only where both attempts did, so a brief stall of the machine can't end it. The tables below show both attempts (D61). Latency is measured at the client. Each scenario starts from an empty stack and runs with the shadow model on, as the service ships; [2b](#2b-a-model-in-shadow) compares the direct and stub runs with it off. `make report` writes the tables below from the result files committed in `bench/results/`, and CI fails if they differ. Every number here comes from that script; none was typed by hand.
+`make bench` drives the stack with k6 at a constant arrival rate and measures latency at the client. Each step lasts 3 minutes. The rate starts at 50 requests a second and doubles until p99 passes the 50 ms budget, errors pass 1%, or k6 can't keep up. A step that passes a limit is run again straight away, and the run stops only if the second attempt fails too, so one stall of the machine can't end it early. The tables below show both attempts. Every scenario starts from an empty stack with the shadow model on, as the service ships; the [model section](#a-model-in-shadow) compares runs with it off. [design.md](docs/design.md) section 12 has the full procedure.
+
+`make report` writes the tables from the result files in `bench/results/`, and CI fails if they don't match, so none of these numbers was typed by hand.
 
 <!-- bench:start -->
 <!-- Made by `make report` from `bench/results/2026-11-09/`; `make check-readme` fails if it differs. Don't edit by hand. -->
@@ -140,24 +140,23 @@ Measured on:
 
 <!-- bench:end -->
 
-How to read them:
+What the tables show:
 
-- **One busy account breaks the budget before total traffic does.** The direct and stub tables spread the load over many accounts and raise the rate. The hot table holds the rate at the direct table's first step and grows one account's window instead. Every decision reads that account's whole 24 h window to compute its sums, so the cost grows with the window, not with the rate (D16). Multi-level buckets are the documented way up (D16). They aren't built; they're a follow-up.
-- **Past its last clean step, the path through the stub falls back rather than hangs.** The posting, the relay and the consumer share the machine with the decision API. Once they can't keep up, the stub's backup answer shows up in the timeout rate, and the feature lag grows, as design.md's failure table says it should.
-- **Every scenario ran in one session, on one commit** (D57.2), so the tables compare like with like. An earlier hot-account run had used a hot sender, and the bench's own attempts grew the window it was measuring, so the scenario was redesigned around a receiver (D50).
-- **A stall of the machine can't decide a result.** Earlier sessions were set aside: in one the Mac slept inside a step, and in another a brief stall ended a run at a rate the service holds. The report now refuses a step that ran off its length or on battery, and a step that passes a limit runs once more. Every crossing above failed on both attempts (D60, D61).
+- One busy account breaks the budget long before total traffic does. The direct and stub runs spread the load over many accounts and raise the rate, while the hot-account run stays at the first step's rate and grows one account's window instead. Every decision reads that account's whole 24-hour window to compute its sums, so the cost grows with the window, not with the rate. Multi-level buckets, described in decisions.md, would bound that cost, but they aren't built.
+- Past its last clean step, the path through the stub falls back instead of hanging. The posting, the relay and the consumer share one machine with the decision API, and once they can't keep up, the stub's backup answers show up in the timeout rate and the feature lag grows, as design.md's failure table says they should.
+- All the scenarios ran in one session on one commit, so the tables compare like with like. Earlier sessions were thrown out: in one the Mac slept in the middle of a step, and in another a brief stall stopped a run early. The report now rejects a step that didn't run for its planned length or that ran on battery power. An earlier hot-account run used a hot sender, and the bench's own requests grew the very window it was measuring, so the scenario now uses a hot receiver.
 
-## 2b: a model in shadow
+## A model in shadow
 
-The rules above were written by hand. 2b asks whether a model trained on labelled fraud does better, without letting it near a live decision:
+The rules above were written by hand. The second part of the project asks whether a model trained on labelled fraud does better, without letting it anywhere near a live decision.
 
-1. **Replay.** [PaySim](https://www.kaggle.com/datasets/ealaxi/paysim1), a month of simulated mobile-money transactions with fraud labels, becomes ledger transfers (`make profile` checks the sample first). You download its CSV into the git-ignored `data/` yourself.
-2. **One feature module.** The offline pipeline that builds training data calls the same code the consumer and the API call. Only events before a decision's time count (I6), and `make parity` replays real transfers through the stack and checks that every logged snapshot equals the offline recompute, exactly (I7).
-3. **Train honestly.** `make model` trains LightGBM, inside Docker only, on the 31 features the live guard sees: no balance columns and no hour of day, which make PaySim artificially easy (D35, D54). The split is by days, and the threshold holds at most 1% of transfers, the review capacity (D34, D38). The [model card](ml/reports/model_card.md) gives the data, split, threshold, metrics and limitations.
-4. **Shadow.** The decision API scores the model after the rules have decided and stores the score next to the decision, which never reads it. Scoring runs on its own thread with a 10 ms limit, so a slow, failing or nonsensical model stores no score and changes nothing (D39, D57.1, I8).
-5. **Backtest.** `make backtest` holds a PaySim-scaled copy of the rules (`make paysim-rules`, D54) and the model to the same number of held transfers on the seven test days, which neither saw. Where many transfers share the model's score at that line, it shows the model on both sides of the tie rather than break it arbitrarily (D59). The [report](ml/reports/backtest.md) has the details.
+[PaySim](https://www.kaggle.com/datasets/ealaxi/paysim1), a month of simulated mobile-money transactions with fraud labels, is turned into ledger transfers. You download its CSV into the git-ignored `data/` yourself, and `make profile` checks it first. The training data comes from the same feature code the consumer and the API run, using only events before each decision (I6). `make parity` replays real transfers through the stack and checks that every logged snapshot matches the offline recompute exactly (I7).
 
-`make report` writes the tables below from `ml/reports/backtest.json` and the bench results, and CI fails if they differ.
+`make model` trains LightGBM, inside Docker only, on the 31 features the live service sees. It leaves out the balance columns and the hour of day, which make PaySim unrealistically easy. The data is split by day, and the threshold holds at most 1% of transfers, the assumed review capacity. The [model card](ml/reports/model_card.md) covers the data, split, threshold, metrics and limitations.
+
+The decision API scores the model after the rules have decided and stores the score next to the decision, which never reads it. Scoring runs on its own thread with a 10 ms limit, so a slow, failing or broken model stores no score and changes nothing (I8).
+
+`make backtest` compares a PaySim-scaled copy of the rules (`make paysim-rules`) with the model at the same number of held transfers, on seven test days that neither has seen. When many transfers share the model's score at the cut-off, it reports the model on both sides of the tie instead of breaking it arbitrarily. The [backtest report](ml/reports/backtest.md) has the details. `make report` writes the tables below from the backtest's and the bench's result files, and CI checks them like the ones above.
 
 <!-- 2b:start -->
 <!-- Made by `make report` from `ml/reports/backtest.json` and `bench/results/2026-11-09/`; `make check-readme` fails if it differs. Don't edit by hand. -->
@@ -199,26 +198,26 @@ With the model off, p99 first passes 50 ms at **800 transfers a second**. With i
 
 <!-- 2b:end -->
 
-How to read them:
+What the tables show:
 
-- **The model doesn't beat the rules on PaySim's test days.** The rules' hold count falls inside a tie of the model's scores, and the rules' recall, fraud value caught and false-positive rate each lie between the model's on the two sides of that tie. PaySim is a simulation, so this says nothing yet about real fraud.
-- **Shadow scoring costs no capacity.** With the model off and on, the direct path and the path through the stub first pass 50 ms at the same rate, and with it on, every rate below that held within the budget (Phase 8, criterion 4).
-- **Its added latency is smaller than the spread between runs.** At some rates p99 is lower with the model on than off. One 3-minute step per rate shows that the cost is small, not exactly how small.
+- On PaySim's test days the model doesn't beat the rules. The rules' hold count lands inside a tie in the model's scores, and the rules' recall, fraud value caught and false-positive rate all fall between the model's figures on either side of that tie. PaySim is simulated, so this says nothing yet about real fraud.
+- Shadow scoring costs no capacity. With the model on, the direct path and the path through the stub first pass 50 ms at the same rate as with it off, and every rate below that stays within the budget.
+- The added latency is smaller than the normal variation between runs, and at some rates p99 is even lower with the model on. One 3-minute step per rate shows that the cost is small, not exactly how small.
 
 ## How it was built and verified
 
-[Claude Code](https://claude.com/claude-code) wrote this project's code, tests and docs under my plan and review. I wrote the brief ([PLAN.md](PLAN.md)) and the working rules ([CLAUDE.md](CLAUDE.md)), answered every design question, and accepted or changed every choice made without one. The work went one phase at a time, one pull request per phase:
+[Claude Code](https://claude.com/claude-code) wrote this project's code, tests and docs under my plan and review. I wrote the brief ([PLAN.md](PLAN.md)) and the working rules ([CLAUDE.md](CLAUDE.md)), answered every design question, and accepted or changed every choice made without one.
 
-1. **Phase 0, a plan before any code.** Every open question was put to me with options, trade-offs and a recommendation, and my answer was recorded in [decisions.md](docs/decisions.md). The docs were written only once nothing was open. From then on they were the source of truth: when code and docs disagreed, the docs won.
-2. **Each later phase** started only when I named it. It was built in full against the acceptance criteria in [phases.md](docs/phases.md), with a test for every criterion, and reviewed as a diff before the pull request opened. I reviewed every pull request and merged it myself.
-3. **Surprises stopped the work.** When a requirement couldn't be met as written, or the docs didn't settle something, the work paused and the question came to me. Those answers are the later D-numbers.
+Phase 0 was planning only. Every open question came to me with options, trade-offs and a recommendation, and each answer went into [decisions.md](docs/decisions.md). The docs were written only once nothing was open, and from then on they were the source of truth: when code and docs disagreed, the docs won.
 
-How it is verified:
+After that, each phase started only when I named it. It was built against its acceptance criteria in [phases.md](docs/phases.md), with a test for every criterion, and became one pull request that I reviewed and merged myself. When a requirement couldn't be met as written, or the docs didn't settle something, the work stopped and the question came back to me. Those answers are the later entries in decisions.md.
 
-- **Invariants as tests.** I1 to I8 each have their own suite in `tests/invariants/`, several driven by Hypothesis against an oracle that recomputes features from the raw event log. I7 runs on generated PaySim-format data in CI and on real transfers with `make parity`; I8 compares decisions with stand-in models that fail in every way, and the real model against a shadow-off API.
-- **Adversarial and fault tests** in `tests/adversarial/` pause or kill each service in turn (the API, Redis, Postgres, Kafka, the consumer), flush Redis and rebuild it, and flood the stack with repeated events, late events and concurrent requests sharing one `requestId`. They check each row of design.md's failure table.
-- **A contract test** checks the stub's events against fixtures captured from tally, and `make e2e` runs tally itself against the service.
-- **CI** runs lint, `make check-readme`, the dependency audit and every test on a fresh Compose stack, then checks that `make down`, `make clean` and `make purge` leave nothing behind.
-- **Guardrails.** Dependencies are pinned in a lockfile and installed from wheels only, everything runs locally in Docker Compose, and the repo holds no secrets.
+How it's verified:
 
-[docs/postmortem.md](docs/postmortem.md) tells the story of one real bug found during the build.
+- I1 to I8 each have their own suite in `tests/invariants/`, several of them property tests with Hypothesis against an oracle that recomputes features from the raw event log. I7 runs on generated PaySim-format data in CI and on real transfers with `make parity`. I8 compares decisions with stand-in models that fail in every way, and the real model against an API with shadow scoring off.
+- The fault tests in `tests/adversarial/` pause or kill each service in turn (the API, Redis, Postgres, Kafka, the consumer), flush Redis and rebuild it, and flood the stack with repeated events, late events and concurrent requests sharing one `requestId`. Together they cover every row of design.md's failure table.
+- A contract test checks the stub's events against fixtures captured from tally, and `make e2e` runs tally itself against the service.
+- CI runs lint, the README check, the dependency audit and every test on a fresh Compose stack, then checks that `make down`, `make clean` and `make purge` leave nothing behind.
+- Dependencies are pinned in a lockfile and installed from wheels only, everything runs locally in Docker Compose, and the repo holds no secrets.
+
+[docs/postmortem.md](docs/postmortem.md) describes one real bug found during the build.
